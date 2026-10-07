@@ -99,19 +99,37 @@ class FinancialParser {
     final s = sender.toLowerCase();
     final b = body.toLowerCase();
 
-    if (s.contains('telebirr') || s == '127' || b.contains('telebirr')) {
+    // 1. Check sender name first (most authoritative)
+    if (s.contains('telebirr') || s == '127') {
       return 'TELEBIRR';
     }
-    if (s.contains('cbe') || b.contains('cbe') || b.contains('commercial bank of ethiopia')) {
+    if (s.contains('cbe') || s.contains('commercial bank of ethiopia')) {
       return 'CBE';
     }
-    if (s.contains('boa') || s.contains('abyssinia') || b.contains('abyssinia')) {
+    if (s.contains('boa') || s.contains('abyssinia')) {
       return 'ABYSSINIA';
     }
-    if (s.contains('dashen') || b.contains('dashen')) {
+    if (s.contains('dashen')) {
       return 'DASHEN';
     }
-    if (s.contains('enat') || b.contains('enat')) {
+    if (s.contains('enat')) {
+      return 'ENAT';
+    }
+
+    // 2. Fall back to body inspection if sender is numeric or generic
+    if (b.contains('bank of abyssinia') || b.contains('abyssinia')) {
+      return 'ABYSSINIA';
+    }
+    if (b.contains('commercial bank of ethiopia') || b.contains('cbe')) {
+      return 'CBE';
+    }
+    if (b.contains('telebirr')) {
+      return 'TELEBIRR';
+    }
+    if (b.contains('dashen')) {
+      return 'DASHEN';
+    }
+    if (b.contains('enat')) {
       return 'ENAT';
     }
     return 'OTHER';

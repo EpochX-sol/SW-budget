@@ -119,12 +119,12 @@
       "sender": "BoA",
       "type": "expense",
       "priority": 10,
-      "pattern": "(?i)(?:has been debited by|debited for)\\s+(?:ETB|Birr)?",
+      "pattern": "(?i)(?:was debited with|has been debited by|debited for|debited with)\\s*(?:ETB|Birr)?",
       "fields": {
-        "amount": "(?i)(?:debited by|debited for)\\s*(?:ETB|Birr)?\\s*([0-9,]+(?:\\.[0-9]{1,2})?)",
-        "counterparty": "(?i)(?:to|for)\\s+([A-Za-z0-9 .'-]+?)(?:\\.|,|Avail|Bal)",
-        "balance": "(?i)(?:Avail Bal|Balance):?\\s*(?:ETB|Birr)?\\s*([0-9,]+(?:\\.[0-9]{1,2})?)",
-        "reference": "(?i)(?:Ref(?: No)?|Txn):?\\s*([A-Za-z0-9]+)"
+        "amount": "(?i)(?:debited with|debited by|debited for)\\s*(?:ETB|Birr)?\\s*([0-9,]+(?:\\.[0-9]+)?)",
+        "counterparty": "(?i)(?:ETB|Birr)?\\s*[0-9,.]+\\s+(?:for the|for|to)\\s+([A-Za-z0-9 .'-]+?)(?:,|\\.|\\s+including|\\s+Available|\\s+Avail|\\s+Bal)",
+        "balance": "(?i)(?:Available [Bb]alance|Avail Bal|Balance):?\\s*(?:ETB|Birr)?\\s*([0-9,]+(?:\\.[0-9]+)?)",
+        "reference": "(?i)(?:slip/\\?trx=|\\bRef(?: No)?\\b|\\bTxn\\b):?\\s*([A-Za-z0-9]+)"
       }
     },
     {
@@ -133,12 +133,12 @@
       "sender": "BoA",
       "type": "income",
       "priority": 10,
-      "pattern": "(?i)(?:has been credited by|credited with)\\s+(?:ETB|Birr)?",
+      "pattern": "(?i)(?:was credited with|has been credited by|credited with|credited by)\\s*(?:ETB|Birr)?",
       "fields": {
-        "amount": "(?i)(?:credited by|credited with)\\s*(?:ETB|Birr)?\\s*([0-9,]+(?:\\.[0-9]{1,2})?)",
-        "counterparty": "(?i)(?:from)\\s+([A-Za-z0-9 .'-]+?)(?:\\.|,|Avail|Bal)",
-        "balance": "(?i)(?:Avail Bal|Balance):?\\s*(?:ETB|Birr)?\\s*([0-9,]+(?:\\.[0-9]{1,2})?)",
-        "reference": "(?i)(?:Ref(?: No)?|Txn):?\\s*([A-Za-z0-9]+)"
+        "amount": "(?i)(?:credited with|credited by)\\s*(?:ETB|Birr)?\\s*([0-9,]+(?:\\.[0-9]+)?)",
+        "counterparty": "(?i)(?:from\\s+([A-Za-z0-9 .'-]+?)(?:\\s+by|\\s*\\.|\\s+Available)|by\\s+(?!Reference\\b)([A-Za-z0-9 .'-]+?)(?:\\s*\\.|\\s+Available))",
+        "balance": "(?i)(?:Available [Bb]alance|Avail Bal|Balance):?\\s*(?:ETB|Birr)?\\s*([0-9,]+(?:\\.[0-9]+)?)",
+        "reference": "(?i)(?:slip/\\?trx=|\\bRef(?: No)?\\b|\\bTxn\\b):?\\s*([A-Za-z0-9]+)"
       }
     }
   ]
