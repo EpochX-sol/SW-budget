@@ -14,6 +14,14 @@ import 'tables/local_saving_plans.dart';
 import 'tables/local_sync_state.dart';
 import 'tables/local_unparsed_messages.dart';
 
+export 'tables/local_accounts.dart';
+export 'tables/local_categories.dart';
+export 'tables/local_transactions.dart';
+export 'tables/local_limits.dart';
+export 'tables/local_saving_plans.dart';
+export 'tables/local_sync_state.dart';
+export 'tables/local_unparsed_messages.dart';
+
 DynamicLibrary _openSqlCipherOnAndroid() {
   try {
     return DynamicLibrary.open('libsqlcipher.so');
@@ -63,14 +71,6 @@ void ensureSqlCipherLoaded() {
     open.overrideFor(OperatingSystem.linux, _openSqlCipherOnLinux);
   }
 }
-
-export 'tables/local_accounts.dart';
-export 'tables/local_categories.dart';
-export 'tables/local_transactions.dart';
-export 'tables/local_limits.dart';
-export 'tables/local_saving_plans.dart';
-export 'tables/local_sync_state.dart';
-export 'tables/local_unparsed_messages.dart';
 
 /// Database event for reactive data updates
 enum DatabaseTable {
