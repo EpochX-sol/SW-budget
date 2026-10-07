@@ -3,25 +3,14 @@ import 'package:flutter/foundation.dart';
 
 /// Centralized API endpoint constants and base URL resolution
 class ApiEndpoints {
-  /// Default base URL with dart-define override and production fallback
+  /// Default base URL with dart-define override and Render production fallback
   static String get defaultBaseUrl {
     const envUrl = String.fromEnvironment('API_BASE_URL');
     if (envUrl.isNotEmpty) {
       return envUrl;
     }
 
-    if (kReleaseMode) {
-      return 'https://api.sw-budget.com';
-    }
-
-    if (kIsWeb) {
-      return 'http://localhost:3000';
-    }
-    if (Platform.isAndroid) {
-      // 10.0.2.2 is the standard loopback IP for Android emulator to host machine
-      return 'http://10.0.2.2:3000';
-    }
-    return 'http://localhost:3000';
+    return 'https://sw-budget.onrender.com';
   }
 
   // System
