@@ -6,9 +6,12 @@ build/
 
 # Environment files
 .env
+.env.*
 .env.local
 *.env
+*.env.*
 !.env.example
+!backend/.env.example
 
 # Database & Backups
 pgdata/
