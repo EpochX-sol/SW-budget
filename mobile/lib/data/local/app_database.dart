@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'dart:ffi';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+import 'package:sqlite3/open.dart';
 import 'package:sqlite3/sqlite3.dart' as sqlite;
 import 'tables/local_accounts.dart';
 import 'tables/local_categories.dart';
@@ -11,6 +13,56 @@ import 'tables/local_limits.dart';
 import 'tables/local_saving_plans.dart';
 import 'tables/local_sync_state.dart';
 import 'tables/local_unparsed_messages.dart';
+
+DynamicLibrary _openSqlCipherOnAndroid() {
+  try {
+    return DynamicLibrary.open('libsqlcipher.so');
+  } on ArgumentError {
+    try {
+      final appIdAsBytes = File('/proc/self/cmdline').readAsBytesSync();
+      final endOfAppId = appIdAsBytes.indexOf(0);
+      final appId = String.fromCharCodes(
+        appIdAsBytes.sublist(0, endOfAppId > 0 ? endOfAppId : appIdAsBytes.length),
+      );
+      return DynamicLibrary.open('/data/data/$appId/lib/libsqlcipher.so');
+    } catch (_) {
+      return DynamicLibrary.process();
+    }
+  } catch (_) {
+    return DynamicLibrary.process();
+  }
+}
+
+DynamicLibrary _openSqlCipherOnWindows() {
+  try {
+    return DynamicLibrary.open('sqlcipher.dll');
+  } catch (_) {
+    return DynamicLibrary.open('sqlite3.dll');
+  }
+}
+
+DynamicLibrary _openSqlCipherOnLinux() {
+  try {
+    return DynamicLibrary.open('libsqlcipher.so');
+  } catch (_) {
+    return DynamicLibrary.open('libsqlite3.so');
+  }
+}
+
+bool _sqlCipherInitialized = false;
+
+/// Configures sqlite3 FFI to load the bundled SQLCipher binary instead of default unencrypted sqlite3
+void ensureSqlCipherLoaded() {
+  if (_sqlCipherInitialized || kIsWeb) return;
+  _sqlCipherInitialized = true;
+  if (Platform.isAndroid) {
+    open.overrideFor(OperatingSystem.android, _openSqlCipherOnAndroid);
+  } else if (Platform.isWindows) {
+    open.overrideFor(OperatingSystem.windows, _openSqlCipherOnWindows);
+  } else if (Platform.isLinux) {
+    open.overrideFor(OperatingSystem.linux, _openSqlCipherOnLinux);
+  }
+}
 
 export 'tables/local_accounts.dart';
 export 'tables/local_categories.dart';
@@ -49,6 +101,7 @@ class AppDatabase {
     required String passphrase,
     String? customPath,
   }) async {
+    ensureSqlCipherLoaded();
     String dbPath = customPath ?? '';
     if (dbPath.isEmpty) {
       final docsDir = await getApplicationDocumentsDirectory();
@@ -79,6 +132,7 @@ class AppDatabase {
 
   /// In-memory encrypted or test database
   static AppDatabase openInMemory({String? passphrase}) {
+    ensureSqlCipherLoaded();
     final db = sqlite.sqlite3.openInMemory();
     if (passphrase != null && passphrase.isNotEmpty) {
       final sanitized = passphrase.replaceAll("'", "''");

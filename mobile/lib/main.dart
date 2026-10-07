@@ -4,10 +4,12 @@ import 'core/device/background_sync_coordinator.dart';
 import 'core/router/app_router.dart';
 import 'core/security/auth_state.dart';
 import 'core/theme/app_theme.dart';
+import 'data/local/app_database.dart';
 import 'data/sms/ingestion_provider.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  ensureSqlCipherLoaded();
   runApp(
     const ProviderScope(
       child: SwBudgetApp(),
