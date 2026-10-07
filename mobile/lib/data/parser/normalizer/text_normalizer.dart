@@ -66,11 +66,13 @@ class TextNormalizer {
     return result;
   }
 
-  /// Cleans a numeric string (e.g. "1,450.50" -> 1450.50).
+  /// Cleans a numeric string (e.g. "1,450.50" -> 1450.50, or "5.0." -> 5.0).
   static double? parseAmount(String? raw) {
     if (raw == null || raw.trim().isEmpty) return null;
 
-    final cleaned = raw.replaceAll(',', '').replaceAll(' ', '').trim();
+    var cleaned = raw.replaceAll(',', '').replaceAll(' ', '').trim();
+    // Strip trailing punctuation (e.g., "5.0." at end of sentence)
+    cleaned = cleaned.replaceAll(RegExp(r'\.+$'), '');
     return double.tryParse(cleaned);
   }
 
