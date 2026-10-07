@@ -74,6 +74,13 @@ class FinancialParser {
       }
     }
 
+    // Reject failed transaction / insufficient balance alerts
+    if (bLower.contains('insufficient balance') ||
+        bLower.contains('transaction failed') ||
+        bLower.contains('unsuccessful')) {
+      return false;
+    }
+
     // Check sender match
     for (final known in _knownFinancialSenders) {
       if (sLower.contains(known)) return true;

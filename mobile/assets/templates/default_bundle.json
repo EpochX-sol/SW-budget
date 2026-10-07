@@ -72,17 +72,17 @@
       }
     },
     {
-      "id": "telebirr_payment_en",
+      "id": "telebirr_transfer_en",
       "bank": "TELEBIRR",
       "sender": "Telebirr",
       "type": "expense",
-      "priority": 10,
-      "pattern": "(?i)(?:You have paid|transferred|bought airtime)\\s+(?:ETB|Birr)?",
+      "priority": 11,
+      "pattern": "(?i)(?:You have transferred|transferred|transfered)\\s+(?:ETB|Birr)?",
       "fields": {
-        "amount": "(?i)(?:paid|transferred|airtime)\\s*(?:of)?\\s*(?:ETB|Birr)?\\s*([0-9,]+(?:\\.[0-9]{1,2})?)",
-        "counterparty": "(?i)(?:to|for)\\s+([A-Za-z0-9 .'-]+?)(?:\\s+on|\\s+at|\\.|,|Transaction)",
-        "balance": "(?i)(?:Current balance is|balance is|Balance:)\\s*(?:ETB|Birr)?\\s*([0-9,]+(?:\\.[0-9]{1,2})?)",
-        "reference": "(?i)\\b(?:Transaction ID|Txn ID|ID):?\\s*([A-Za-z0-9]+)"
+        "amount": "(?i)(?:transferred|transfered)\\s*(?:ETB|Birr)?\\s*([0-9,]+(?:\\.[0-9]+)?)",
+        "counterparty": "(?i)(?:to)\\s+([A-Za-z0-9 .'-]+?)(?:\\s*\\([0-9*]+\\)|\\s+account number|\\s+on|\\.|,|Your telebirr|Your transaction)",
+        "balance": "(?i)(?:current\\s+(?:E-Money\\s+Account\\s+)?balance\\s+is|balance\\s+is|Balance:)\\s*(?:ETB|Birr)?\\s*([0-9,]+(?:\\.[0-9]+)?)",
+        "reference": "(?i)(?:telebirr\\s+transaction\\s+number\\s+is|transaction\\s+number\\s+is|transactioninfo\\.ethiotelecom\\.et/receipt/|\\b(?:Transaction ID|Txn ID|ID):?)\\s*([A-Za-z0-9]+)"
       }
     },
     {
@@ -91,12 +91,54 @@
       "sender": "Telebirr",
       "type": "income",
       "priority": 10,
-      "pattern": "(?i)(?:You have received|deposited)\\s+(?:ETB|Birr)?",
+      "pattern": "(?i)(?:You have received|You have deposited|received|deposited)\\s+(?:airtime\\s+)?(?:ETB|Birr)?",
       "fields": {
-        "amount": "(?i)(?:received|deposited)\\s*(?:ETB|Birr)?\\s*([0-9,]+(?:\\.[0-9]{1,2})?)",
-        "counterparty": "(?i)(?:from)\\s+([A-Za-z0-9 .'-]+?)(?:\\s+on|\\s+at|\\.|,|Transaction)",
-        "balance": "(?i)(?:Current balance is|balance is|Balance:)\\s*(?:ETB|Birr)?\\s*([0-9,]+(?:\\.[0-9]{1,2})?)",
-        "reference": "(?i)\\b(?:Transaction ID|Txn ID|ID):?\\s*([A-Za-z0-9]+)"
+        "amount": "(?i)(?:received|deposited)\\s*(?:airtime\\s+)?(?:ETB|Birr)?\\s*([0-9,]+(?:\\.[0-9]+)?)",
+        "counterparty": "(?i)(?:from|via)\\s+([A-Za-z0-9 .'-]+?)(?:\\s+to your|\\s*\\([0-9*]+\\)|\\s+on|\\.|,|Transaction)",
+        "balance": "(?i)(?:current\\s+(?:E-Money\\s+Account\\s+)?balance\\s+is|balance\\s+is|Balance:)\\s*(?:ETB|Birr)?\\s*([0-9,]+(?:\\.[0-9]+)?)",
+        "reference": "(?i)(?:transaction\\s+number\\s+is|by\\s+transaction\\s+number|transactioninfo\\.ethiotelecom\\.et/receipt/|\\b(?:Transaction ID|Txn ID|ID):?)\\s*([A-Za-z0-9]+)"
+      }
+    },
+    {
+      "id": "telebirr_payment_en",
+      "bank": "TELEBIRR",
+      "sender": "Telebirr",
+      "type": "expense",
+      "priority": 10,
+      "pattern": "(?i)(?:You have paid|You have recharged|bought airtime|You have bought airtime|recharged airtime|recharged|paid|bought)\\s+(?:of\\s+)?(?:ETB|Birr)?",
+      "fields": {
+        "amount": "(?i)(?:paid|recharged|bought airtime|bought)\\s*(?:of)?\\s*(?:ETB|Birr)?\\s*([0-9,]+(?:\\.[0-9]+)?)",
+        "counterparty": "(?i)(?:for\\s+package\\s+([A-Za-z0-9 .'+-]+?)\\s+(?:purchase|made|on)|(?:for\\s+Service Fee\\s+)?from\\s+[0-9]+\\s*-\\s*([A-Za-z0-9 .'-]+?)\\s+on|airtime\\s+for\\s+([0-9*]+)\\s+on|for\\s+([0-9*]+)\\s+on|to\\s+([A-Za-z0-9 .'-]+?)(?:\\s+on|\\.|,|Transaction)|for\\s+([A-Za-z0-9 .'-]+?)(?:\\s+on|\\.|,|Transaction))",
+        "balance": "(?i)(?:current\\s+(?:E-Money\\s+Account\\s+)?balance\\s+is|balance\\s+is|Balance:)\\s*(?:ETB|Birr)?\\s*([0-9,]+(?:\\.[0-9]+)?)",
+        "reference": "(?i)(?:transaction\\s+number\\s+is|transactioninfo\\.ethiotelecom\\.et/receipt/|\\b(?:Transaction ID|Txn ID|ID):?)\\s*([A-Za-z0-9]+)"
+      }
+    },
+    {
+      "id": "telebirr_credit_repay_en",
+      "bank": "TELEBIRR",
+      "sender": "Telebirr",
+      "type": "expense",
+      "priority": 10,
+      "pattern": "(?i)(?:paid a credit amount of|Credit amount has been paid successfully)",
+      "fields": {
+        "amount": "(?i)(?:paid a credit amount of|The paid amount is)\\s*(?:ETB|Birr)?\\s*([0-9,]+(?:\\.[0-9]+)?)",
+        "counterparty": "(?i)(?:partnership with\\s+([A-Za-z0-9 ]+)|(telebirr Credit|Ethiotel Credit))",
+        "balance": "(?i)(?:outstanding\\s+credit\\s+amount|total\\s+outstanding\\s+amount\\s+is|monthly\\s+outstanding\\s+amount\\s+is)\\s*(?:ETB|Birr)?\\s*([0-9,]+(?:\\.[0-9]+)?)",
+        "reference": "(?i)(?:on\\s+([0-9]{4}-[0-9]{2}-[0-9]{2}\\s+[0-9]{2}:[0-9]{2}:[0-9]{2}))"
+      }
+    },
+    {
+      "id": "telebirr_credit_loan_en",
+      "bank": "TELEBIRR",
+      "sender": "Telebirr",
+      "type": "income",
+      "priority": 10,
+      "pattern": "(?i)(?:using Ethiotel Credit|using Endekise|Your credit request with)",
+      "fields": {
+        "amount": "(?i)(?:credit amount(?: on this transaction)?|credit amount is)\\s*(?:ETB|Birr)?\\s*([0-9,]+(?:\\.[0-9]+)?)",
+        "counterparty": "(?i)(?:using\\s+([A-Za-z0-9]+)|in partnership with\\s+([A-Za-z0-9 ]+))",
+        "balance": "(?i)(?:outstanding amount is|available credit limit)\\s*(?:ETB|Birr)?\\s*([0-9,]+(?:\\.[0-9]+)?)",
+        "reference": "(?i)(?:with\\s+([A-Za-z0-9]+)\\s+contract number|Contract number is\\s+([0-9]+))"
       }
     },
     {
