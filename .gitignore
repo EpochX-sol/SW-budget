@@ -1,0 +1,43 @@
+# Dependency directories
+node_modules/
+dist/
+build/
+.dart_tool/
+
+# Environment files
+.env
+.env.local
+*.env
+!.env.example
+
+# Database & Backups
+pgdata/
+redisdata/
+*.swbackup
+*.sql.gz
+
+# Flutter & Android
+mobile/build/
+mobile/.dart_tool/
+mobile/android/.gradle/
+mobile/android/local.properties
+mobile/android/key.properties
+*.jks
+*.keystore
+google-services.json
+
+# IDE & OS
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.DS_Store
+Thumbs.db
+
+# Sensitive SMS data
+*real_sms*
+*sms_samples*.json
+*sms_samples*.txt

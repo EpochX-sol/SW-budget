@@ -1,0 +1,377 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email           String    @unique
+  passwordHash    String    @map("password_hash")
+  displayName     String?   @map("display_name")
+  currency        String    @default("ETB") @db.Char(3)
+  timezone        String    @default("Africa/Addis_Ababa")
+  monthStartDay   Int       @default(1) @map("month_start_day") @db.SmallInt
+  locale          String    @default("en")
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt       DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  devices         Device[]
+  syncState       UserSyncState?
+  accounts        Account[]
+  categories      Category[]
+  transactions    Transaction[]
+  limits          Limit[]
+  savingPlans     SavingPlan[]
+  notifications   Notification[]
+  preferences     NotificationPreference?
+  schedules       UserSchedule[]
+  outboxEvents    OutboxEvent[]
+  aiThreads       AiThread[]
+  aiProposals     AiProposal[]
+  aiUsage         AiUsage[]
+  aiMemories      AiMemory[]
+  auditLogs       AuditLog[]
+
+  @@map("users")
+}
+
+model UserSyncState {
+  userId    String   @id @map("user_id") @db.Uuid
+  seq       BigInt   @default(0)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_sync_state")
+}
+
+model Device {
+  id                 String    @id @db.Uuid
+  userId             String    @map("user_id") @db.Uuid
+  deviceName         String    @map("device_name")
+  platform           String    @default("android")
+  appVersion         String    @map("app_version")
+  fcmToken           String?   @map("fcm_token")
+  pushEnabled        Boolean   @default(true) @map("push_enabled")
+  pushTokenUpdatedAt DateTime? @map("push_token_updated_at") @db.Timestamptz(6)
+  refreshTokenHash   String?   @map("refresh_token_hash")
+  lastSeenAt         DateTime  @default(now()) @map("last_seen_at") @db.Timestamptz(6)
+
+  user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("devices")
+}
+
+model Account {
+  id                String    @id @db.Uuid
+  userId            String    @map("user_id") @db.Uuid
+  provider          String    // CBE | TELEBIRR | ABYSSINIA | CASH
+  name              String
+  accountMask       String?   @map("account_mask")
+  lastKnownBalance  Decimal?  @map("last_known_balance") @db.Decimal(14, 2)
+  balanceUpdatedAt  DateTime? @map("balance_updated_at") @db.Timestamptz(6)
+  isSavings         Boolean   @default(false) @map("is_savings")
+  changeSeq         BigInt    @map("change_seq")
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt         DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions      Transaction[]
+  savingPlans       SavingPlan[]
+
+  @@index([userId])
+  @@map("accounts")
+}
+
+model Category {
+  id        String    @id @db.Uuid
+  userId    String?   @map("user_id") @db.Uuid // null = system default
+  name      String
+  icon      String
+  colorHex  String    @map("color_hex") @db.Char(7)
+  isSystem  Boolean   @default(false) @map("is_system")
+  changeSeq BigInt    @map("change_seq")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  user      User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions Transaction[]
+
+  @@index([userId])
+  @@map("categories")
+}
+
+model Transaction {
+  id                 String    @id @db.Uuid
+  userId             String    @map("user_id") @db.Uuid
+  accountId          String    @map("account_id") @db.Uuid
+  categoryId         String?   @map("category_id") @db.Uuid
+  type               String    // income | expense | transfer_in | transfer_out | fee | reversal
+  amount             Decimal   @db.Decimal(14, 2)
+  balanceAfter       Decimal?  @map("balance_after") @db.Decimal(14, 2)
+  counterparty       String?
+  reference          String?
+  note               String?
+  occurredAt         DateTime  @map("occurred_at") @db.Timestamptz(6)
+  source             String    @default("sms")
+  parseConfidence    Float?    @map("parse_confidence") @db.Real
+  templateId         String?   @map("template_id")
+  balanceChainOk     Boolean?  @map("balance_chain_ok")
+  gapBeforeAmount    Decimal?  @map("gap_before_amount") @db.Decimal(14, 2)
+  isInternalTransfer Boolean   @default(false) @map("is_internal_transfer")
+  parentTxnId        String?   @map("parent_txn_id") @db.Uuid
+  dedupeKey          String    @map("dedupe_key")
+  needsReview        Boolean   @default(false) @map("needs_review")
+  userEditedFields   String[]  @default([]) @map("user_edited_fields")
+  changeSeq          BigInt    @map("change_seq")
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt          DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account            Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  category           Category? @relation(fields: [categoryId], references: [id])
+  parentTxn          Transaction? @relation("FeeLink", fields: [parentTxnId], references: [id])
+  childTxns          Transaction[] @relation("FeeLink")
+
+  @@unique([userId, dedupeKey])
+  @@index([userId, occurredAt(sort: Desc)])
+  @@index([userId, categoryId, occurredAt])
+  @@index([userId, changeSeq])
+  @@map("transactions")
+}
+
+model Limit {
+  id              String    @id @db.Uuid
+  userId          String    @map("user_id") @db.Uuid
+  scopeType       String    @default("overall") @map("scope_type") // overall | category | account
+  scopeId         String?   @map("scope_id") @db.Uuid
+  periodType      String    @map("period_type") // daily | weekly | monthly | custom
+  startDate       DateTime? @map("start_date") @db.Date
+  endDate         DateTime? @map("end_date") @db.Date
+  amount          Decimal   @db.Decimal(14, 2)
+  mode            String    @default("soft") // soft | hard
+  rollover        Boolean   @default(false)
+  alertThresholds Int[]     @default([50, 80, 100]) @map("alert_thresholds")
+  active          Boolean   @default(true)
+  changeSeq       BigInt    @map("change_seq")
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt       DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("limits")
+}
+
+model SavingPlan {
+  id              String    @id @db.Uuid
+  userId          String    @map("user_id") @db.Uuid
+  name            String
+  periodType      String    @map("period_type") // weekly | monthly | yearly | custom
+  targetAmount    Decimal   @map("target_amount") @db.Decimal(14, 2)
+  startDate       DateTime  @map("start_date") @db.Date
+  endDate         DateTime? @map("end_date") @db.Date
+  ruleType        String    @map("rule_type") // fixed | percent_of_income | round_up | leftover
+  ruleValue       Decimal?  @map("rule_value") @db.Decimal(14, 2)
+  linkedAccountId String?   @map("linked_account_id") @db.Uuid
+  priority        Int       @default(3) @db.SmallInt
+  status          String    @default("active") // active | completed | paused
+  changeSeq       BigInt    @map("change_seq")
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt       DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  linkedAccount   Account?  @relation(fields: [linkedAccountId], references: [id])
+
+  @@index([userId])
+  @@map("saving_plans")
+}
+
+model DailyCategoryTotal {
+  userId     String   @map("user_id") @db.Uuid
+  day        DateTime @db.Date
+  categoryId String   @map("category_id") @db.Uuid
+  accountId  String   @map("account_id") @db.Uuid
+  expense    Decimal  @default(0) @db.Decimal(14, 2)
+  income     Decimal  @default(0) @db.Decimal(14, 2)
+  fees       Decimal  @default(0) @db.Decimal(14, 2)
+  txnCount   Int      @default(0) @map("txn_count")
+  updatedAt  DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@id([userId, day, categoryId, accountId])
+  @@index([userId, day(sort: Desc)])
+  @@map("daily_category_totals")
+}
+
+model Notification {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId           String    @map("user_id") @db.Uuid
+  type             String
+  channel          String
+  priority         String    @default("normal")
+  title            String
+  body             String
+  data             Json      @default("{}")
+  route            String?
+  dedupeKey        String?   @map("dedupe_key")
+  deliveryStatus   String    @default("pending") @map("delivery_status")
+  sentAt           DateTime? @map("sent_at") @db.Timestamptz(6)
+  readAt           DateTime? @map("read_at") @db.Timestamptz(6)
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, dedupeKey])
+  @@map("notifications")
+}
+
+model NotificationPreference {
+  userId       String    @id @map("user_id") @db.Uuid
+  enabled      Boolean   @default(true)
+  categories   Json      @default("{\"limits\":true,\"daily\":true,\"savings\":true,\"bills\":true,\"insights\":true,\"sync\":true,\"security\":true}")
+  quietStart   String    @default("22:00") @map("quiet_start")
+  quietEnd     String    @default("07:00") @map("quiet_end")
+  morningTime  String    @default("07:30") @map("morning_time")
+  eveningTime  String?   @map("evening_time")
+  digestDow    Int       @default(0) @map("digest_dow") @db.SmallInt
+  digestTime   String    @default("18:00") @map("digest_time")
+  showAmounts  Boolean   @default(false) @map("show_amounts")
+  dailyCap     Int       @default(5) @map("daily_cap") @db.SmallInt
+  snoozedUntil DateTime? @map("snoozed_until") @db.Timestamptz(6)
+
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("notification_preferences")
+}
+
+model UserSchedule {
+  userId    String   @map("user_id") @db.Uuid
+  kind      String
+  nextRunAt DateTime @map("next_run_at") @db.Timestamptz(6)
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, kind])
+  @@index([nextRunAt])
+  @@map("user_schedules")
+}
+
+model OutboxEvent {
+  id          BigInt    @id @default(autoincrement())
+  userId      String    @map("user_id") @db.Uuid
+  eventType   String    @map("event_type")
+  payload     Json
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  processedAt DateTime? @map("processed_at") @db.Timestamptz(6)
+
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([id])
+  @@map("outbox_events")
+}
+
+model AiThread {
+  id        String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String      @map("user_id") @db.Uuid
+  title     String      @default("New Conversation")
+  createdAt DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages  AiMessage[]
+
+  @@index([userId])
+  @@map("ai_threads")
+}
+
+model AiMessage {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  threadId   String    @map("thread_id") @db.Uuid
+  role       String    // user | assistant | tool
+  content    String
+  toolCalls  Json?     @map("tool_calls")
+  tokensUsed Int       @default(0) @map("tokens_used")
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  thread     AiThread  @relation(fields: [threadId], references: [id], onDelete: Cascade)
+
+  @@map("ai_messages")
+}
+
+model AiProposal {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  kind      String    // adjust_limit | create_saving_plan
+  payload   Json
+  status    String    @default("pending") // pending | accepted | rejected
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  decidedAt DateTime? @map("decided_at") @db.Timestamptz(6)
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("ai_proposals")
+}
+
+model AiUsage {
+  id             BigInt   @id @default(autoincrement())
+  userId         String   @map("user_id") @db.Uuid
+  month          String   @db.Char(7) // YYYY-MM
+  tokensConsumed Int      @default(0) @map("tokens_consumed")
+  costEstimateUsd Decimal @default(0) @map("cost_estimate_usd") @db.Decimal(10, 4)
+  updatedAt      DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, month])
+  @@map("ai_usage")
+}
+
+model AiMemory {
+  id                  String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId              String     @map("user_id") @db.Uuid
+  kind                String     // goal | habit | preference | fact | decision
+  content             String
+  embedding           Unsupported("vector(768)")?
+  importance          Int        @default(3) @db.SmallInt
+  confidence          Float      @default(0.8) @db.Real
+  pinned              Boolean    @default(false)
+  sourceMessageId     String?    @map("source_message_id") @db.Uuid
+  lastConfirmedAt     DateTime?  @map("last_confirmed_at") @db.Timestamptz(6)
+  supersededBy        String?    @map("superseded_by") @db.Uuid
+  createdAt           DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  deletedAt           DateTime?  @map("deleted_at") @db.Timestamptz(6)
+
+  user                User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  supersededMemory    AiMemory?  @relation("MemorySuperseded", fields: [supersededBy], references: [id])
+  supersedingMemories AiMemory[] @relation("MemorySuperseded")
+
+  @@index([userId])
+  @@map("ai_memories")
+}
+
+model AuditLog {
+  id        BigInt   @id @default(autoincrement())
+  userId    String?  @map("user_id") @db.Uuid
+  action    String
+  ipAddress String?  @map("ip_address")
+  userAgent String?  @map("user_agent")
+  metadata  Json     @default("{}")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([createdAt(sort: Desc)])
+  @@map("audit_log")
+}
+

@@ -1,0 +1,131 @@
+{
+  "bundle_version": 3,
+  "templates": [
+    {
+      "id": "cbe_debit_en",
+      "bank": "CBE",
+      "sender": "CBE",
+      "type": "expense",
+      "priority": 10,
+      "pattern": "(?i)(?:debited with|paid|transferred)\\s+(?:ETB|Birr)",
+      "fields": {
+        "amount": "(?i)(?:debited with|paid|transferred)\\s+(?:ETB|Birr)?\\s*([0-9,]+(?:\\.[0-9]{1,2})?)",
+        "counterparty": "(?i)(?:to|for)\\s+([A-Za-z0-9 .'-]+?)(?:\\s+on|\\s+at|\\.|,|Txn|Ref)",
+        "balance": "(?i)(?:current balance|balance|Bal)(?:\\s+is)?:?\\s*(?:ETB|Birr)?\\s*([0-9,]+(?:\\.[0-9]{1,2})?)",
+        "reference": "(?i)(?:Txn ID|Txn|Transaction ID|Ref(?: No)?):?\\s*([A-Za-z0-9]+)"
+      }
+    },
+    {
+      "id": "cbe_credit_en",
+      "bank": "CBE",
+      "sender": "CBE",
+      "type": "income",
+      "priority": 10,
+      "pattern": "(?i)(?:credited with|received)\\s+(?:ETB|Birr)",
+      "fields": {
+        "amount": "(?i)(?:credited with|received)\\s+(?:ETB|Birr)?\\s*([0-9,]+(?:\\.[0-9]{1,2})?)",
+        "counterparty": "(?i)(?:from)\\s+([A-Za-z0-9 .'-]+?)(?:\\s+on|\\s+at|\\.|,|Txn|Ref)",
+        "balance": "(?i)(?:current balance|balance|Bal)(?:\\s+is)?:?\\s*(?:ETB|Birr)?\\s*([0-9,]+(?:\\.[0-9]{1,2})?)",
+        "reference": "(?i)(?:Txn ID|Txn|Transaction ID|Ref(?: No)?):?\\s*([A-Za-z0-9]+)"
+      }
+    },
+    {
+      "id": "cbe_debit_am",
+      "bank": "CBE",
+      "sender": "CBE",
+      "type": "expense",
+      "priority": 9,
+      "pattern": "(?i)(?:ተቀንሷል|ተላልፏል|ተከፍሏል)",
+      "fields": {
+        "amount": "(?i)([0-9,]+(?:\\.[0-9]{1,2})?)\\s*(?:ETB|ብር)?\\s*(?:ተቀንሷል|ተላልፏል|ተከፍሏል)",
+        "counterparty": "(?i)(?:ለ)\\s+([^\n.,]+?)(?:\\s+በ|\\.|,|$)",
+        "balance": "(?i)(?:ቀሪ\\s*ሂሳብ|ቀሪዎ):?\\s*([0-9,]+(?:\\.[0-9]{1,2})?)\\s*(?:ETB|ብር)",
+        "reference": "(?i)(?:የግብይት\\s*ቁጥር|መለያ):?\\s*([A-Za-z0-9]+)"
+      }
+    },
+    {
+      "id": "cbe_credit_am",
+      "bank": "CBE",
+      "sender": "CBE",
+      "type": "income",
+      "priority": 9,
+      "pattern": "(?i)(?:ገቢ\\s*ሆኗል|ተቀብለዋል|ተጨምሯል)",
+      "fields": {
+        "amount": "(?i)([0-9,]+(?:\\.[0-9]{1,2})?)\\s*(?:ETB|ብር)?\\s*(?:ገቢ\\s*ሆኗል|ተቀብለዋል|ተጨምሯል)",
+        "counterparty": "(?i)(?:ከ)\\s+([^\n.,]+?)(?:\\s+በ|\\.|,|$)",
+        "balance": "(?i)(?:ቀሪ\\s*ሂሳብ|ቀሪዎ):?\\s*([0-9,]+(?:\\.[0-9]{1,2})?)\\s*(?:ETB|ብር)",
+        "reference": "(?i)(?:የግብይት\\s*ቁጥር|መለያ):?\\s*([A-Za-z0-9]+)"
+      }
+    },
+    {
+      "id": "telebirr_payment_en",
+      "bank": "TELEBIRR",
+      "sender": "Telebirr",
+      "type": "expense",
+      "priority": 10,
+      "pattern": "(?i)(?:You have paid|transferred|bought airtime)\\s+(?:ETB|Birr)?",
+      "fields": {
+        "amount": "(?i)(?:paid|transferred|airtime)\\s*(?:of)?\\s*(?:ETB|Birr)?\\s*([0-9,]+(?:\\.[0-9]{1,2})?)",
+        "counterparty": "(?i)(?:to|for)\\s+([A-Za-z0-9 .'-]+?)(?:\\s+on|\\s+at|\\.|,|Transaction)",
+        "balance": "(?i)(?:Current balance is|balance is|Balance:)\\s*(?:ETB|Birr)?\\s*([0-9,]+(?:\\.[0-9]{1,2})?)",
+        "reference": "(?i)\\b(?:Transaction ID|Txn ID|ID):?\\s*([A-Za-z0-9]+)"
+      }
+    },
+    {
+      "id": "telebirr_receive_en",
+      "bank": "TELEBIRR",
+      "sender": "Telebirr",
+      "type": "income",
+      "priority": 10,
+      "pattern": "(?i)(?:You have received|deposited)\\s+(?:ETB|Birr)?",
+      "fields": {
+        "amount": "(?i)(?:received|deposited)\\s*(?:ETB|Birr)?\\s*([0-9,]+(?:\\.[0-9]{1,2})?)",
+        "counterparty": "(?i)(?:from)\\s+([A-Za-z0-9 .'-]+?)(?:\\s+on|\\s+at|\\.|,|Transaction)",
+        "balance": "(?i)(?:Current balance is|balance is|Balance:)\\s*(?:ETB|Birr)?\\s*([0-9,]+(?:\\.[0-9]{1,2})?)",
+        "reference": "(?i)\\b(?:Transaction ID|Txn ID|ID):?\\s*([A-Za-z0-9]+)"
+      }
+    },
+    {
+      "id": "telebirr_payment_am",
+      "bank": "TELEBIRR",
+      "sender": "Telebirr",
+      "type": "expense",
+      "priority": 9,
+      "pattern": "(?i)(?:ከፍለዋል|አስተላልፈዋል)",
+      "fields": {
+        "amount": "(?i)([0-9,]+(?:\\.[0-9]{1,2})?)\\s*(?:ETB|ብር)?\\s*(?:ከፍለዋል|አስተላልፈዋል)",
+        "counterparty": "(?i)(?:ለ)\\s+([^\n.,]+?)(?:\\s+በ|\\.|,|$)",
+        "balance": "(?i)(?:ቀሪ\\s*ሂሳብ(?:ዎ)?|ቀሪዎ):?\\s*([0-9,]+(?:\\.[0-9]{1,2})?)\\s*(?:ETB|ብር)",
+        "reference": "(?i)(?:የግብይት\\s*መለያ):?\\s*([A-Za-z0-9]+)"
+      }
+    },
+    {
+      "id": "boa_debit_en",
+      "bank": "ABYSSINIA",
+      "sender": "BoA",
+      "type": "expense",
+      "priority": 10,
+      "pattern": "(?i)(?:has been debited by|debited for)\\s+(?:ETB|Birr)?",
+      "fields": {
+        "amount": "(?i)(?:debited by|debited for)\\s*(?:ETB|Birr)?\\s*([0-9,]+(?:\\.[0-9]{1,2})?)",
+        "counterparty": "(?i)(?:to|for)\\s+([A-Za-z0-9 .'-]+?)(?:\\.|,|Avail|Bal)",
+        "balance": "(?i)(?:Avail Bal|Balance):?\\s*(?:ETB|Birr)?\\s*([0-9,]+(?:\\.[0-9]{1,2})?)",
+        "reference": "(?i)(?:Ref(?: No)?|Txn):?\\s*([A-Za-z0-9]+)"
+      }
+    },
+    {
+      "id": "boa_credit_en",
+      "bank": "ABYSSINIA",
+      "sender": "BoA",
+      "type": "income",
+      "priority": 10,
+      "pattern": "(?i)(?:has been credited by|credited with)\\s+(?:ETB|Birr)?",
+      "fields": {
+        "amount": "(?i)(?:credited by|credited with)\\s*(?:ETB|Birr)?\\s*([0-9,]+(?:\\.[0-9]{1,2})?)",
+        "counterparty": "(?i)(?:from)\\s+([A-Za-z0-9 .'-]+?)(?:\\.|,|Avail|Bal)",
+        "balance": "(?i)(?:Avail Bal|Balance):?\\s*(?:ETB|Birr)?\\s*([0-9,]+(?:\\.[0-9]{1,2})?)",
+        "reference": "(?i)(?:Ref(?: No)?|Txn):?\\s*([A-Za-z0-9]+)"
+      }
+    }
+  ]
+}
