@@ -35,7 +35,8 @@ SW-budget/
 
 ## Getting Started
 
-> 📖 **Full step-by-step emulator and development guide:** [RUN_GUIDE.md](RUN_GUIDE.md)
+> 📖 **Full step-by-step emulator and development guide:** [RUN_GUIDE.md](RUN_GUIDE.md)  
+> 🚀 **Render Cloud Deployment Guide (Postgres & Backend):** [RENDER_DEPLOY_GUIDE.md](RENDER_DEPLOY_GUIDE.md)
 
 ### 1. Prerequisites
 - Docker & Docker Compose

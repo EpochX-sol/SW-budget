@@ -1,0 +1,47 @@
+services:
+  # Fastify Node.js Web Service
+  - type: web
+    name: sw-budget-backend
+    runtime: node
+    rootDir: backend
+    plan: free
+    region: oregon
+    buildCommand: npm install && npx prisma generate && npm run build
+    startCommand: npx prisma migrate deploy && node dist/server.js
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: HOST
+        value: 0.0.0.0
+      - key: DATABASE_URL
+        fromDatabase:
+          name: sw-budget-postgres
+          property: connectionString
+      - key: REDIS_URL
+        # Set this to your Upstash Redis URL (free) or Render Redis connection string
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+      - key: JWT_EXPIRES_IN
+        value: "900"
+      - key: TEMPLATE_SIGNING_PRIVATE_KEY
+        value: 9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60
+      - key: TEMPLATE_SIGNING_PUBLIC_KEY
+        value: d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a
+      - key: LLM_PROVIDER
+        value: gemini
+      - key: GEMINI_API_KEY
+        sync: false
+
+databases:
+  # Managed PostgreSQL with pgvector support
+  - name: sw-budget-postgres
+    databaseName: sw_budget
+    user: sw
+    plan: free
+    region: oregon
+    postgresMajorVersion: "16"

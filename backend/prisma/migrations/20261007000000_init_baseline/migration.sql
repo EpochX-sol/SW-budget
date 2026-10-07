@@ -1,3 +1,7 @@
+-- Initialize PostgreSQL extensions for SW-budget
+CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
 -- CreateSchema
 CREATE SCHEMA IF NOT EXISTS "public";
 
