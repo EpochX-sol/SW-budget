@@ -144,9 +144,16 @@ class FinancialParser {
         // 1. Amount
         final amountRegex = _safeRegExp(fields.amount, caseSensitive: false);
         final amountMatch = amountRegex.firstMatch(normalized);
-        final rawAmount = amountMatch != null && amountMatch.groupCount >= 1
-            ? amountMatch.group(1)
-            : null;
+        String? rawAmount;
+        if (amountMatch != null && amountMatch.groupCount >= 1) {
+          for (int g = 1; g <= amountMatch.groupCount; g++) {
+            final candidate = amountMatch.group(g);
+            if (candidate != null && candidate.trim().isNotEmpty) {
+              rawAmount = candidate;
+              break;
+            }
+          }
+        }
         final amount = TextNormalizer.parseAmount(rawAmount);
 
         if (amount == null || amount <= 0) {
@@ -159,7 +166,13 @@ class FinancialParser {
           final balRegex = _safeRegExp(fields.balance!, caseSensitive: false);
           final balMatch = balRegex.firstMatch(normalized);
           if (balMatch != null && balMatch.groupCount >= 1) {
-            balanceAfter = TextNormalizer.parseAmount(balMatch.group(1));
+            for (int g = 1; g <= balMatch.groupCount; g++) {
+              final candidate = balMatch.group(g);
+              if (candidate != null && candidate.trim().isNotEmpty) {
+                balanceAfter = TextNormalizer.parseAmount(candidate);
+                break;
+              }
+            }
           }
         }
 
@@ -169,7 +182,13 @@ class FinancialParser {
           final cpRegex = _safeRegExp(fields.counterparty!, caseSensitive: false);
           final cpMatch = cpRegex.firstMatch(normalized);
           if (cpMatch != null && cpMatch.groupCount >= 1) {
-            counterparty = cpMatch.group(1)?.trim();
+            for (int g = 1; g <= cpMatch.groupCount; g++) {
+              final candidate = cpMatch.group(g)?.trim();
+              if (candidate != null && candidate.isNotEmpty) {
+                counterparty = candidate;
+                break;
+              }
+            }
           }
         }
 
@@ -179,7 +198,13 @@ class FinancialParser {
           final refRegex = _safeRegExp(fields.reference!, caseSensitive: false);
           final refMatch = refRegex.firstMatch(normalized);
           if (refMatch != null && refMatch.groupCount >= 1) {
-            reference = refMatch.group(1)?.trim();
+            for (int g = 1; g <= refMatch.groupCount; g++) {
+              final candidate = refMatch.group(g)?.trim();
+              if (candidate != null && candidate.isNotEmpty) {
+                reference = candidate;
+                break;
+              }
+            }
           }
         }
 

@@ -2,6 +2,20 @@
   "bundle_version": 3,
   "templates": [
     {
+      "id": "cbe_debit_total_en",
+      "bank": "CBE",
+      "sender": "CBE",
+      "type": "expense",
+      "priority": 12,
+      "pattern": "(?i)(?:with a total of|with total of|total of)\\s*(?:ETB|Birr)",
+      "fields": {
+        "amount": "(?i)(?:with a total of|with total of|total of)\\s*(?:ETB|Birr)?\\s*([0-9,]+(?:\\.[0-9]+)?\\.?)",
+        "counterparty": "(?i)(?:to|for|on your account|account)\\s+([A-Za-z0-9 .*'-]+?)(?:\\s+on\\s+[0-9]|\\s+at\\s+[0-9]|\\.|,|Txn|Ref|Service charge|Your account)",
+        "balance": "(?i)(?:current balance|balance|Bal)(?:\\s+is)?:?\\s*(?:ETB|Birr)?\\s*([0-9,]+(?:\\.[0-9]+)?\\.?)",
+        "reference": "(?i)(?:Txn ID|Txn|Transaction ID|Ref(?: No)?|mbreciept\\.cbe\\.com\\.et/|\\?id=|BranchReceipt/):?\\s*([A-Za-z0-9_-]+)"
+      }
+    },
+    {
       "id": "cbe_debit_en",
       "bank": "CBE",
       "sender": "CBE",
@@ -9,10 +23,10 @@
       "priority": 10,
       "pattern": "(?i)(?:debited with|paid|transferred|debit transaction of|debited)",
       "fields": {
-        "amount": "(?i)(?:with total of|total of|debit transaction of|debited with|paid|transferred)\\s*(?:ETB|Birr)?\\s*([0-9,]+(?:\\.[0-9]+)?\\.?)",
-        "counterparty": "(?i)(?:to|for|on your account|account)\\s+([A-Za-z0-9 .*'-]+?)(?:\\s+on|\\s+at|\\.|,|Txn|Ref|Service charge)",
+        "amount": "(?i)(?:debited with|debit transaction of|paid|transferred|with)\\s*(?:ETB|Birr)?\\s*([0-9,]+(?:\\.[0-9]+)?\\.?)",
+        "counterparty": "(?i)(?:to|for|on your account|account)\\s+([A-Za-z0-9 .*'-]+?)(?:\\s+on\\s+[0-9]|\\s+at\\s+[0-9]|\\.|,|Txn|Ref|Service charge|including)",
         "balance": "(?i)(?:current balance|balance|Bal)(?:\\s+is)?:?\\s*(?:ETB|Birr)?\\s*([0-9,]+(?:\\.[0-9]+)?\\.?)",
-        "reference": "(?i)(?:Txn ID|Txn|Transaction ID|Ref(?: No)?|mbreciept\\.cbe\\.com\\.et/):?\\s*([A-Za-z0-9_-]+)"
+        "reference": "(?i)(?:Txn ID|Txn|Transaction ID|Ref(?: No)?|mbreciept\\.cbe\\.com\\.et/|\\?id=|BranchReceipt/):?\\s*([A-Za-z0-9_-]+)"
       }
     },
     {
@@ -21,12 +35,12 @@
       "sender": "CBE",
       "type": "income",
       "priority": 10,
-      "pattern": "(?i)(?:credited with|received|credit transaction of|credited)",
+      "pattern": "(?i)(?:credited with|received|credit transaction of|credited by|credited)",
       "fields": {
-        "amount": "(?i)(?:with total of|total of|credit transaction of|credited with|received)\\s*(?:ETB|Birr)?\\s*([0-9,]+(?:\\.[0-9]+)?\\.?)",
-        "counterparty": "(?i)(?:from|on your account|account)\\s+([A-Za-z0-9 .*'-]+?)(?:\\s+on|\\s+at|\\.|,|Txn|Ref|Service charge)",
+        "amount": "(?i)(?:credited with|received|credit transaction of|with)\\s*(?:ETB|Birr)?\\s*([0-9,]+(?:\\.[0-9]+)?\\.?)",
+        "counterparty": "(?i)(?:from account [0-9*]+\\s*\\(([^)]+)\\)|credited by\\s+([A-Za-z0-9 .'-]+?)\\s+with|from\\s+([A-Za-z0-9 .'-]+?)(?:\\s+on|\\s+at|\\.|,|Txn|Ref))",
         "balance": "(?i)(?:current balance|balance|Bal)(?:\\s+is)?:?\\s*(?:ETB|Birr)?\\s*([0-9,]+(?:\\.[0-9]+)?\\.?)",
-        "reference": "(?i)(?:Txn ID|Txn|Transaction ID|Ref(?: No)?|mbreciept\\.cbe\\.com\\.et/):?\\s*([A-Za-z0-9_-]+)"
+        "reference": "(?i)(?:Txn ID|Txn|Transaction ID|Ref(?: No)?|mbreciept\\.cbe\\.com\\.et/|\\?id=|BranchReceipt/):?\\s*([A-Za-z0-9_-]+)"
       }
     },
     {
