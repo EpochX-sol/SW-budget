@@ -45,3 +45,6 @@ Thumbs.db
 *real_sms*
 *sms_samples*.json
 *sms_samples*.txt
+
+# Cloned reference repos
+reference_repos/
