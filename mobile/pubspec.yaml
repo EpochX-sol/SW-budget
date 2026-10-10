@@ -58,6 +58,9 @@ dependencies:
   csv: ^6.0.0
   package_info_plus: ^8.3.0
   logger: ^2.5.0
+  another_telephony: ^0.4.1
+  pdf: ^3.13.1
+  shelf: ^1.4.2
 
 dev_dependencies:
   flutter_test:

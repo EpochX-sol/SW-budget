@@ -140,7 +140,7 @@ class MainActivity : FlutterFragmentActivity() {
         )
         val selection = "${Telephony.Sms.DATE} >= ?"
         val selectionArgs = arrayOf(sinceTimestamp.toString())
-        val sortOrder = "${Telephony.Sms.DATE} DESC LIMIT 500"
+        val sortOrder = "${Telephony.Sms.DATE} DESC"
 
         try {
             contentResolver.query(uri, projection, selection, selectionArgs, sortOrder)?.use { cursor ->
@@ -164,6 +164,7 @@ class MainActivity : FlutterFragmentActivity() {
                                 "timestamp" to cursor.getLong(dateCol)
                             )
                         )
+                        if (results.size >= 1000) break
                     }
                 }
             }

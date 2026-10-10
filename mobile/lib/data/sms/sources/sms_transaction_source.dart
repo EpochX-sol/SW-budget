@@ -1,17 +1,36 @@
 import 'dart:async';
-import 'package:flutter/services.dart';
+import 'dart:ui';
+import 'package:another_telephony/telephony.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import '../models/raw_financial_message.dart';
 import 'transaction_source.dart';
+import '../../parser/normalizer/bank_sender_matcher.dart';
 
-/// Ingestion source capturing financial SMS via Android Telephony BroadcastReceiver
+/// Top-level background entrypoint required by Android OS for headless isolate
+@pragma('vm:entry-point')
+void onBackgroundSmsMessage(SmsMessage message) async {
+  try {
+    WidgetsFlutterBinding.ensureInitialized();
+    DartPluginRegistrant.ensureInitialized();
+
+    final address = message.address;
+    final body = message.body;
+    if (address == null || body == null) return;
+
+    if (!BankSenderMatcher.isRelevantSender(address)) return;
+
+    debugPrint('Headless background SMS received from $address');
+  } catch (e) {
+    debugPrint('Background SMS handler error: $e');
+  }
+}
+
+/// Ingestion source capturing real-time bank SMS and querying inbox history via `another_telephony`.
 class SmsTransactionSource implements TransactionSource {
-  static const MethodChannel _methodChannel = MethodChannel('com.swbudget/sms');
-  static const EventChannel _eventChannel = EventChannel('com.swbudget/sms_stream');
-
+  final Telephony _telephony = Telephony.instance;
   final StreamController<RawFinancialMessage> _streamController =
       StreamController<RawFinancialMessage>.broadcast();
-
-  StreamSubscription? _platformSubscription;
 
   SmsTransactionSource() {
     _initializePlatformListener();
@@ -19,29 +38,29 @@ class SmsTransactionSource implements TransactionSource {
 
   void _initializePlatformListener() {
     try {
-      _platformSubscription = _eventChannel.receiveBroadcastStream().listen(
-        (dynamic event) {
-          if (event is Map) {
-            final rawMap = Map<String, dynamic>.from(event);
-            final message = RawFinancialMessage(
-              id: rawMap['id']?.toString() ?? DateTime.now().millisecondsSinceEpoch.toString(),
-              sender: rawMap['sender']?.toString() ?? '',
-              body: rawMap['body']?.toString() ?? '',
-              receivedAt: rawMap['timestamp'] != null
-                  ? DateTime.fromMillisecondsSinceEpoch(rawMap['timestamp'] as int)
+      if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+        _telephony.listenIncomingSms(
+          onNewMessage: (SmsMessage message) {
+            final address = message.address ?? '';
+            final body = message.body ?? '';
+            if (address.isEmpty || body.isEmpty) return;
+
+            final raw = RawFinancialMessage(
+              id: message.id?.toString() ?? DateTime.now().millisecondsSinceEpoch.toString(),
+              sender: address,
+              body: body,
+              receivedAt: message.date != null
+                  ? DateTime.fromMillisecondsSinceEpoch(message.date!)
                   : DateTime.now(),
               source: 'sms',
-              extraMetadata: rawMap,
             );
-            _streamController.add(message);
-          }
-        },
-        onError: (dynamic error) {
-          // Native channel might not be attached in desktop/test environments
-        },
-      );
+            _streamController.add(raw);
+          },
+          onBackgroundMessage: onBackgroundSmsMessage,
+        );
+      }
     } catch (_) {
-      // Ignored if platform channel is unavailable in test harness
+      // Ignored if platform channel is unavailable in desktop or test environment
     }
   }
 
@@ -54,28 +73,38 @@ class SmsTransactionSource implements TransactionSource {
     required List<String> whitelistSenders,
   }) async {
     try {
-      final List<dynamic>? result = await _methodChannel.invokeMethod<List<dynamic>>(
-        'queryInbox',
-        {
-          'sinceTimestamp': since.millisecondsSinceEpoch,
-          'senders': whitelistSenders,
-        },
+      if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) {
+        return [];
+      }
+
+      final List<SmsMessage> messages = await _telephony.getInboxSms(
+        columns: [SmsColumn.ID, SmsColumn.ADDRESS, SmsColumn.BODY, SmsColumn.DATE],
+        filter: SmsFilter.where(SmsColumn.DATE).greaterThanOrEqualTo(since.millisecondsSinceEpoch.toString()),
+        sortOrder: [OrderBy(SmsColumn.DATE, sort: Sort.DESC)],
       );
 
-      if (result == null) return [];
+      final results = <RawFinancialMessage>[];
+      for (final m in messages) {
+        final address = m.address ?? '';
+        final body = m.body ?? '';
+        if (address.isEmpty || body.isEmpty) continue;
 
-      return result.map((dynamic item) {
-        final map = Map<String, dynamic>.from(item as Map);
-        return RawFinancialMessage(
-          id: map['id']?.toString() ?? '',
-          sender: map['sender']?.toString() ?? '',
-          body: map['body']?.toString() ?? '',
-          receivedAt: DateTime.fromMillisecondsSinceEpoch(map['timestamp'] as int),
-          source: 'sms',
-        );
-      }).toList();
-    } on MissingPluginException catch (_) {
-      return [];
+        if (BankSenderMatcher.matchesWhitelist(address, whitelistSenders)) {
+          results.add(
+            RawFinancialMessage(
+              id: m.id?.toString() ?? '',
+              sender: address,
+              body: body,
+              receivedAt: m.date != null
+                  ? DateTime.fromMillisecondsSinceEpoch(m.date!)
+                  : DateTime.now(),
+              source: 'sms',
+            ),
+          );
+        }
+      }
+
+      return results;
     } catch (_) {
       return [];
     }
@@ -88,7 +117,6 @@ class SmsTransactionSource implements TransactionSource {
 
   @override
   void dispose() {
-    _platformSubscription?.cancel();
     _streamController.close();
   }
 }

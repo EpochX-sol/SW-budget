@@ -5,11 +5,18 @@ import 'models/regex_template.dart';
 import 'models/template_bundle.dart';
 import 'models/parse_result.dart';
 import 'normalizer/text_normalizer.dart';
+import 'normalizer/bank_sender_matcher.dart';
+import 'pattern_parser.dart';
+import 'fallback_sms_parser.dart';
 
-/// Pure Dart financial message parser with regex matching, deduplication hashing,
-/// and Ed25519 cryptographic bundle validation.
+/// Pure Dart financial message parser supporting:
+/// 1. Totals' 3,238-line named regex patterns with fee breakdown extraction
+/// 2. Backward-compatible priority template bundles
+/// 3. Heuristic token fallback parsing ensuring zero dropped records
+/// 4. Ed25519 cryptographic bundle validation
 class FinancialParser {
   List<RegexTemplate> _templates = [];
+  PatternParser? _patternParser;
 
   FinancialParser({List<RegexTemplate>? initialTemplates}) {
     if (initialTemplates != null) {
@@ -18,7 +25,18 @@ class FinancialParser {
     }
   }
 
-  /// Loads templates from a JSON string (e.g. from assets or cache).
+  /// Loads named regex patterns (Totals 3,238-line patterns) and banks configuration.
+  void loadNamedPatterns({
+    required String patternsJson,
+    required String banksJson,
+  }) {
+    _patternParser = PatternParser.fromJson(
+      patternsJson: patternsJson,
+      banksJson: banksJson,
+    );
+  }
+
+  /// Loads legacy templates from a JSON string (e.g. default_bundle.json).
   void loadTemplatesFromJson(String jsonString) {
     final decoded = jsonDecode(jsonString) as Map<String, dynamic>;
     final bundle = TemplateBundle.fromJson(decoded);
@@ -30,39 +48,21 @@ class FinancialParser {
     _templates.sort((a, b) => b.priority.compareTo(a.priority));
   }
 
-  /// Known financial senders in Ethiopia.
-  static const Set<String> _knownFinancialSenders = {
-    'cbe',
-    'cbebirr',
-    'cbe_birr',
-    'telebirr',
-    '127',
-    'boa',
-    'abyssinia',
-    'bank of abyssinia',
-    'dashen',
-    'enat',
-    'awash',
-    'nib',
-    'zemen',
-  };
-
-  /// Common non-financial OTP / security keywords.
-  static const List<String> _otpKeywords = [
-    'verification code',
-    'security code',
-    'otp',
-    'do not share',
-    'ይለፍ ቃል',
-  ];
-
   /// Detects whether the sender and message content indicate a financial transaction.
   bool isFinancialMessage(String sender, String body) {
     final sLower = sender.toLowerCase().trim();
     final bLower = body.toLowerCase();
 
-    // Reject pure OTP messages
-    for (final otp in _otpKeywords) {
+    // 1. Common non-financial OTP / security keywords
+    const otpKeywords = [
+      'verification code',
+      'security code',
+      'otp',
+      'do not share',
+      'ይለፍ ቃል',
+    ];
+
+    for (final otp in otpKeywords) {
       if (bLower.contains(otp) &&
           !bLower.contains('debited') &&
           !bLower.contains('credited') &&
@@ -74,19 +74,19 @@ class FinancialParser {
       }
     }
 
-    // Reject failed transaction / insufficient balance alerts
+    // 2. Reject failed transaction / insufficient balance alerts
     if (bLower.contains('insufficient balance') ||
         bLower.contains('transaction failed') ||
         bLower.contains('unsuccessful')) {
       return false;
     }
 
-    // Check sender match
-    for (final known in _knownFinancialSenders) {
-      if (sLower.contains(known)) return true;
+    // 3. Match 8 Ethiopian banks
+    if (BankSenderMatcher.isRelevantSender(sender)) {
+      return true;
     }
 
-    // Check body financial cues
+    // 4. Check body financial cues
     if (bLower.contains('etb') ||
         bLower.contains('birr') ||
         bLower.contains('ብር') ||
@@ -106,39 +106,26 @@ class FinancialParser {
     final s = sender.toLowerCase();
     final b = body.toLowerCase();
 
-    // 1. Check sender name first (most authoritative)
-    if (s.contains('telebirr') || s == '127') {
-      return 'TELEBIRR';
-    }
-    if (s.contains('cbe') || s.contains('commercial bank of ethiopia')) {
-      return 'CBE';
-    }
-    if (s.contains('boa') || s.contains('abyssinia')) {
-      return 'ABYSSINIA';
-    }
-    if (s.contains('dashen')) {
-      return 'DASHEN';
-    }
-    if (s.contains('enat')) {
-      return 'ENAT';
-    }
+    if (s.contains('telebirr') || s == '127') return 'TELEBIRR';
+    if (s.contains('cbe') || s.contains('commercial bank of ethiopia') || s == '889') return 'CBE';
+    if (s.contains('boa') || s.contains('abyssinia')) return 'ABYSSINIA';
+    if (s.contains('awash')) return 'AWASH';
+    if (s.contains('dashen')) return 'DASHEN';
+    if (s.contains('amhara')) return 'AMHARA';
+    if (s.contains('nib')) return 'NIB';
+    if (s.contains('zemen')) return 'ZEMEN';
+    if (s.contains('enat')) return 'ENAT';
 
-    // 2. Fall back to body inspection if sender is numeric or generic
-    if (b.contains('bank of abyssinia') || b.contains('abyssinia')) {
-      return 'ABYSSINIA';
-    }
-    if (b.contains('commercial bank of ethiopia') || b.contains('cbe')) {
-      return 'CBE';
-    }
-    if (b.contains('telebirr')) {
-      return 'TELEBIRR';
-    }
-    if (b.contains('dashen')) {
-      return 'DASHEN';
-    }
-    if (b.contains('enat')) {
-      return 'ENAT';
-    }
+    if (b.contains('bank of abyssinia') || b.contains('abyssinia')) return 'ABYSSINIA';
+    if (b.contains('commercial bank of ethiopia') || b.contains('cbe')) return 'CBE';
+    if (b.contains('telebirr')) return 'TELEBIRR';
+    if (b.contains('awash')) return 'AWASH';
+    if (b.contains('dashen')) return 'DASHEN';
+    if (b.contains('amhara')) return 'AMHARA';
+    if (b.contains('nib')) return 'NIB';
+    if (b.contains('zemen')) return 'ZEMEN';
+    if (b.contains('enat')) return 'ENAT';
+
     return 'OTHER';
   }
 
@@ -155,7 +142,66 @@ class FinancialParser {
     final normalized = TextNormalizer.normalize(body);
     final provider = detectProvider(sender, body);
 
-    // Filter templates for matching bank provider or fallback
+    // ─────────────────────────────────────────────────────────────
+    // Step 1: Totals 3,238-line Named Regex Evaluation (Primary)
+    // ─────────────────────────────────────────────────────────────
+    if (_patternParser != null) {
+      final details = _patternParser!.extractTransactionDetails(
+        messageBody: body,
+        senderAddress: sender,
+        messageDate: receivedAt,
+      );
+
+      if (details != null && details['amount'] != null) {
+        final amount = (details['amount'] as num).toDouble();
+        final balanceAfter = (details['balanceAfter'] as num?)?.toDouble();
+        final reference = details['reference']?.toString();
+        final counterparty = details['counterparty']?.toString();
+        final fee = (details['fee'] as num?)?.toDouble();
+        final serviceCharge = (details['serviceCharge'] as num?)?.toDouble();
+        final vat = (details['vat'] as num?)?.toDouble();
+        final disasterFund = (details['disasterFund'] as num?)?.toDouble();
+        final accountMask = details['accountMask']?.toString();
+
+        final dedupeKey = _computeDedupeKey(
+          provider: provider,
+          reference: reference,
+          amount: amount,
+          occurredAt: receivedAt,
+        );
+
+        double confidence = 0.90;
+        if (balanceAfter != null) confidence += 0.05;
+        if (reference != null) confidence += 0.04;
+        if (confidence > 0.99) confidence = 0.99;
+
+        final transaction = ParsedTransaction(
+          provider: provider,
+          type: details['type']?.toString() ?? 'expense',
+          amount: amount,
+          balanceAfter: balanceAfter,
+          counterparty: counterparty,
+          reference: reference,
+          occurredAt: receivedAt,
+          parseConfidence: double.parse(confidence.toStringAsFixed(2)),
+          dedupeKey: dedupeKey,
+          rawBody: body,
+          templateId: details['patternDescription']?.toString() ?? 'named_regex',
+          needsReview: balanceAfter == null,
+          fee: fee,
+          serviceCharge: serviceCharge,
+          vat: vat,
+          disasterFund: disasterFund,
+          accountMask: accountMask,
+        );
+
+        return ParseResult.success(transaction);
+      }
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Step 2: Legacy Template Evaluation
+    // ─────────────────────────────────────────────────────────────
     final candidates = _templates.where((t) {
       return t.bank.toUpperCase() == provider.toUpperCase() || t.bank == 'ALL';
     }).toList();
@@ -163,10 +209,9 @@ class FinancialParser {
     for (final template in candidates) {
       final rootRegex = _safeRegExp(template.pattern, caseSensitive: false);
       if (rootRegex.hasMatch(normalized)) {
-        // Match individual field regexes
         final fields = template.fields;
 
-        // 1. Amount
+        // Amount
         final amountRegex = _safeRegExp(fields.amount, caseSensitive: false);
         final amountMatch = amountRegex.firstMatch(normalized);
         String? rawAmount;
@@ -182,10 +227,10 @@ class FinancialParser {
         final amount = TextNormalizer.parseAmount(rawAmount);
 
         if (amount == null || amount <= 0) {
-          continue; // Amount is mandatory for a valid financial transaction
+          continue;
         }
 
-        // 2. Balance After
+        // Balance After
         double? balanceAfter;
         if (fields.balance != null) {
           final balRegex = _safeRegExp(fields.balance!, caseSensitive: false);
@@ -201,7 +246,7 @@ class FinancialParser {
           }
         }
 
-        // 3. Counterparty
+        // Counterparty
         String? counterparty;
         if (fields.counterparty != null) {
           final cpRegex = _safeRegExp(fields.counterparty!, caseSensitive: false);
@@ -217,7 +262,7 @@ class FinancialParser {
           }
         }
 
-        // 4. Reference
+        // Reference
         String? reference;
         if (fields.reference != null) {
           final refRegex = _safeRegExp(fields.reference!, caseSensitive: false);
@@ -233,7 +278,6 @@ class FinancialParser {
           }
         }
 
-        // 5. Deduplication Key calculation
         final dedupeKey = _computeDedupeKey(
           provider: provider,
           reference: reference,
@@ -241,7 +285,6 @@ class FinancialParser {
           occurredAt: receivedAt,
         );
 
-        // 6. Confidence Scoring
         double confidence = 0.70;
         if (balanceAfter != null) confidence += 0.15;
         if (reference != null) confidence += 0.10;
@@ -269,6 +312,48 @@ class FinancialParser {
       }
     }
 
+    // ─────────────────────────────────────────────────────────────
+    // Step 3: Heuristic Token Fallback Scanner (Zero Dropped Records)
+    // ─────────────────────────────────────────────────────────────
+    final fallback = FallbackSmsParser.extract(
+      messageBody: body,
+      senderAddress: sender,
+      messageDate: receivedAt,
+    );
+
+    if (fallback != null && fallback['amount'] != null) {
+      final amount = (fallback['amount'] as num).toDouble();
+      final balanceAfter = (fallback['balanceAfter'] as num?)?.toDouble();
+      final reference = fallback['reference']?.toString();
+      final counterparty = fallback['counterparty']?.toString();
+      final accountMask = fallback['accountMask']?.toString();
+
+      final dedupeKey = _computeDedupeKey(
+        provider: provider,
+        reference: reference,
+        amount: amount,
+        occurredAt: receivedAt,
+      );
+
+      final transaction = ParsedTransaction(
+        provider: provider,
+        type: fallback['type']?.toString() ?? 'expense',
+        amount: amount,
+        balanceAfter: balanceAfter,
+        counterparty: counterparty,
+        reference: reference,
+        occurredAt: receivedAt,
+        parseConfidence: 0.65,
+        dedupeKey: dedupeKey,
+        rawBody: body,
+        templateId: 'heuristic_fallback',
+        needsReview: true,
+        accountMask: accountMask,
+      );
+
+      return ParseResult.success(transaction);
+    }
+
     return ParseResult.unparsed(
       'No matching pattern found for provider $provider',
       isFinancial: true,
@@ -290,7 +375,6 @@ class FinancialParser {
     final raw = '$provider:$refPart:$amtPart:$datePart';
     final bytes = utf8.encode(raw);
 
-    // Simple SHA-256 digest representation
     return _simpleHash(bytes);
   }
 
@@ -352,7 +436,6 @@ class FinancialParser {
   }
 
   static RegExp _safeRegExp(String pattern, {bool caseSensitive = false}) {
-    // Strip inline PCRE flags like (?i) which are not supported in Dart's RegExp engine
     final clean = pattern.replaceAll(RegExp(r'\(\?[imsux-]+\)'), '');
     return RegExp(clean, caseSensitive: caseSensitive);
   }

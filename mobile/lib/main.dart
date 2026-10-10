@@ -6,6 +6,7 @@ import 'core/security/auth_state.dart';
 import 'core/theme/app_theme.dart';
 import 'data/local/app_database.dart';
 import 'data/sms/ingestion_provider.dart';
+export 'data/sms/sources/sms_transaction_source.dart' show onBackgroundSmsMessage;
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
