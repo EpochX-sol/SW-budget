@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:intl/intl.dart';
-import '../../core/backup/backup_export_service.dart';
+import 'package:go_router/go_router.dart';
+
+import '../../core/security/privacy_provider.dart';
 import '../../core/theme/app_colors.dart';
-import '../../core/theme/app_typography.dart';
+import '../../core/widgets/charts/category_donut_chart.dart';
+import '../../core/widgets/charts/flow_bar_chart.dart';
 import '../activity/activity_providers.dart';
-import '../plan/plan_providers.dart';
 
 class InsightsScreen extends ConsumerStatefulWidget {
   const InsightsScreen({super.key});
@@ -15,384 +16,418 @@ class InsightsScreen extends ConsumerStatefulWidget {
 }
 
 class _InsightsScreenState extends ConsumerState<InsightsScreen> {
-  int? _selectedDay;
-
-  void _showBackupPasswordDialog(BuildContext context) {
-    final passwordController = TextEditingController();
-    showDialog<void>(
-      context: context,
-      builder: (dialogCtx) => AlertDialog(
-        backgroundColor: AppColors.surface,
-        title: Text('Encrypt Backup Vault', style: AppTypography.titleLarge),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Enter a strong passphrase to encrypt your .swbackup archive using hardware-derived AES-256-GCM.',
-              style: AppTypography.bodySmall.copyWith(color: AppColors.textSecondary),
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: passwordController,
-              obscureText: true,
-              style: AppTypography.bodyMedium,
-              decoration: InputDecoration(
-                hintText: 'Vault Password',
-                filled: true,
-                fillColor: AppColors.surfaceElevated,
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogCtx).pop(),
-            child: const Text('Cancel', style: TextStyle(color: AppColors.textSecondary)),
-          ),
-          FilledButton(
-            onPressed: () async {
-              final pwd = passwordController.text.trim();
-              if (pwd.length < 4) return;
-              Navigator.of(dialogCtx).pop();
-
-              try {
-                final service = await ref.read(backupExportServiceProvider.future);
-                await service.createEncryptedBackupFile(password: pwd);
-                if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Encrypted .swbackup archive generated and shared.')),
-                  );
-                }
-              } catch (e) {
-                if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Backup export failed: $e')),
-                  );
-                }
-              }
-            },
-            style: FilledButton.styleFrom(backgroundColor: AppColors.primaryLight),
-            child: const Text('Encrypt & Export'),
-          ),
-        ],
-      ),
-    );
-  }
+  String _activePeriod = '30D';
+  static const _periods = ['7D', '30D', 'MOM', 'YTD'];
 
   @override
   Widget build(BuildContext context) {
-    final safeToSpend = ref.watch(safeToSpendProvider);
     final transactionsAsync = ref.watch(transactionsProvider);
-    final now = DateTime.now();
-    final daysInMonth = DateTime(now.year, now.month + 1, 0).day;
-    final monthName = DateFormat('MMMM yyyy').format(now);
+    final isPrivate = ref.watch(privacyModeProvider);
 
-    final transactions = transactionsAsync.asData?.value ?? [];
+    final transactions = transactionsAsync.value ?? [];
 
-    // Calculate real fee sum
-    double totalFees = 0.0;
-    final Map<int, double> dailySpend = {};
-
-    for (final t in transactions) {
-      final type = (t['type'] as String? ?? '').toLowerCase();
-      final amount = (t['amount'] as num?)?.toDouble() ?? 0.0;
-      final occurred = DateTime.tryParse(t['occurred_at'] as String? ?? '');
-
-      if (type == 'fee') {
-        totalFees += amount;
-      }
-
-      if (type == 'expense' && occurred != null && occurred.year == now.year && occurred.month == now.month) {
-        dailySpend[occurred.day] = (dailySpend[occurred.day] ?? 0.0) + amount;
+    // Calculate inflow, outflow, net savings
+    double inflow = 0.0;
+    double outflow = 0.0;
+    for (final tx in transactions) {
+      final type = (tx['type'] as String? ?? '').toLowerCase();
+      final amt = (tx['amount'] as num?)?.toDouble() ?? 0.0;
+      if (type == 'credit' || type == 'income') {
+        inflow += amt;
+      } else if (type == 'debit' || type == 'expense') {
+        outflow += amt;
       }
     }
 
+    // Prototype defaults if no transactions in DB
+    if (transactions.isEmpty) {
+      inflow = 45000.00;
+      outflow = 18095.39;
+    }
+
+    final netSavings = inflow - outflow;
+    final savingsRate = inflow > 0 ? ((netSavings / inflow) * 100).clamp(0, 100).toInt() : 0;
+
     return Scaffold(
       backgroundColor: AppColors.background,
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        title: Text('Analytics & Forecasting', style: AppTypography.titleLarge),
-      ),
       body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(16.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
+        child: RefreshIndicator(
+          color: AppColors.accent,
+          backgroundColor: AppColors.surface,
+          onRefresh: () async {
+            ref.invalidate(transactionsProvider);
+          },
+          child: ListView(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             children: [
-              // Burn-down Forecast Card
-              Container(
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                    colors: [AppColors.surfaceElevated, AppColors.surface],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
+              // 1. Header: Title + Coach Spark Icon
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text(
+                    'Insights',
+                    style: TextStyle(
+                      color: AppColors.text,
+                      fontSize: 22,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: -0.4,
+                    ),
                   ),
-                  borderRadius: BorderRadius.circular(22),
-                  border: Border.all(color: AppColors.borderHighlight),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text('MONTHLY FORECAST',
-                            style: AppTypography.labelSmall.copyWith(
-                                color: AppColors.primaryLight, fontWeight: FontWeight.bold)),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                          decoration: BoxDecoration(
-                            color: AppColors.incomeSurface,
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Text(
-                            'Projected On Track',
-                            style: AppTypography.labelSmall.copyWith(
-                                color: AppColors.incomeLight, fontWeight: FontWeight.bold),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    Text(
-                      '${safeToSpend.safeToday.toStringAsFixed(2)} ETB',
-                      style: AppTypography.displayMedium.copyWith(
-                          fontWeight: FontWeight.w800, color: Colors.white),
-                    ),
-                    Text('Safe daily burn rate for remainder of $monthName',
-                        style: AppTypography.bodySmall.copyWith(color: AppColors.textSecondary)),
-                    const SizedBox(height: 16),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        _ForecastStat(
-                            label: 'Total Budget',
-                            value: '${safeToSpend.totalBudget.toStringAsFixed(0)} ETB'),
-                        _ForecastStat(
-                            label: 'Current Spend',
-                            value: '${safeToSpend.spentSoFar.toStringAsFixed(0)} ETB'),
-                        _ForecastStat(
-                            label: 'Days Left',
-                            value: '${safeToSpend.daysRemaining} days'),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-
-              const SizedBox(height: 24),
-
-              // Money Calendar Heatmap
-              Text('Money Calendar ($monthName)', style: AppTypography.titleMedium),
-              const SizedBox(height: 8),
-              Text(
-                'Daily expense density calculated from verified ledger transactions.',
-                style: AppTypography.bodySmall.copyWith(color: AppColors.textSecondary),
-              ),
-              const SizedBox(height: 12),
-
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: AppColors.surface,
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: AppColors.border),
-                ),
-                child: Column(
-                  children: [
-                    // Day of week headers
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: ['M', 'T', 'W', 'T', 'F', 'S', 'S']
-                          .map((d) => SizedBox(
-                                width: 34,
-                                child: Text(
-                                  d,
-                                  textAlign: TextAlign.center,
-                                  style: AppTypography.labelSmall.copyWith(color: AppColors.textMuted),
-                                ),
-                              ))
-                          .toList(),
-                    ),
-                    const SizedBox(height: 10),
-
-                    // Calendar Grid
-                    GridView.builder(
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: 7,
-                        crossAxisSpacing: 6,
-                        mainAxisSpacing: 6,
-                        childAspectRatio: 1.0,
-                      ),
-                      itemCount: daysInMonth,
-                      itemBuilder: (context, index) {
-                        final day = index + 1;
-                        final isSelected = _selectedDay == day;
-                        final isToday = day == now.day;
-                        final spend = dailySpend[day] ?? 0.0;
-
-                        Color heatColor = AppColors.surfaceElevated;
-                        if (spend > safeToSpend.safeToday * 1.5) {
-                          heatColor = AppColors.expense.withOpacity(0.5);
-                        } else if (spend > 0) {
-                          heatColor = AppColors.primary.withOpacity(0.35);
-                        } else if (day < now.day) {
-                          heatColor = AppColors.surfaceElevated.withOpacity(0.6);
-                        }
-
-                        return GestureDetector(
-                          onTap: () => setState(() => _selectedDay = day),
-                          child: Container(
-                            decoration: BoxDecoration(
-                              color: heatColor,
-                              borderRadius: BorderRadius.circular(8),
-                              border: Border.all(
-                                color: isSelected
-                                    ? AppColors.primaryLight
-                                    : isToday
-                                        ? AppColors.secondaryLight
-                                        : Colors.transparent,
-                                width: 1.5,
-                              ),
-                            ),
-                            child: Center(
-                              child: Text(
-                                '$day',
-                                style: AppTypography.labelSmall.copyWith(
-                                  fontWeight: isToday ? FontWeight.bold : FontWeight.normal,
-                                  color: isToday ? AppColors.secondaryLight : AppColors.textPrimary,
-                                ),
-                              ),
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-
-                    if (_selectedDay != null) ...[
-                      const SizedBox(height: 12),
-                      Text(
-                        'Day $_selectedDay: Total Spend = ${(dailySpend[_selectedDay!] ?? 0.0).toStringAsFixed(2)} ETB',
-                        style: AppTypography.bodySmall.copyWith(
-                            color: AppColors.primaryLight, fontWeight: FontWeight.bold),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-
-              const SizedBox(height: 24),
-
-              // Bank Tariff & Transfer Fees Audit
-              Text('Hidden Fees & Tariff Audit', style: AppTypography.titleMedium),
-              const SizedBox(height: 12),
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: AppColors.surface,
-                  borderRadius: BorderRadius.circular(18),
-                  border: Border.all(color: AppColors.border),
-                ),
-                child: Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(12),
+                  GestureDetector(
+                    onTap: () => context.push('/coach'),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                       decoration: BoxDecoration(
-                        color: AppColors.warning.withOpacity(0.15),
-                        borderRadius: BorderRadius.circular(14),
+                        color: AppColors.surface,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: AppColors.line),
                       ),
-                      child: const Icon(Icons.receipt_rounded, color: AppColors.warning, size: 24),
-                    ),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                      child: const Row(
                         children: [
-                          Text('Bank & Telebirr Tariffs YTD',
-                              style: AppTypography.bodyMedium.copyWith(fontWeight: FontWeight.bold)),
-                          Text('ATM, transfer, and service fees detected',
-                              style: AppTypography.labelSmall.copyWith(color: AppColors.textSecondary)),
+                          Icon(Icons.auto_awesome_rounded, color: AppColors.accent, size: 16),
+                          SizedBox(width: 6),
+                          Text(
+                            'Coach',
+                            style: TextStyle(
+                              color: AppColors.accent,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
                         ],
                       ),
-                    ),
-                    Text(
-                      '${totalFees.toStringAsFixed(2)} ETB',
-                      style: AppTypography.titleMedium.copyWith(
-                        fontWeight: FontWeight.bold,
-                        color: AppColors.warning,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-
-              const SizedBox(height: 24),
-
-              // Data Sovereignty & Export Actions
-              Text('Data Sovereignty & Backups', style: AppTypography.titleMedium),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: () async {
-                        try {
-                          final service = await ref.read(backupExportServiceProvider.future);
-                          await service.exportTransactionsCsv();
-                        } catch (e) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(content: Text('CSV export failed: $e')),
-                          );
-                        }
-                      },
-                      icon: const Icon(Icons.table_chart_outlined, size: 18),
-                      label: const Text('Export CSV'),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: FilledButton.icon(
-                      onPressed: () => _showBackupPasswordDialog(context),
-                      style: FilledButton.styleFrom(
-                        backgroundColor: AppColors.primaryLight,
-                        foregroundColor: AppColors.textInverse,
-                      ),
-                      icon: const Icon(Icons.lock_outline_rounded, size: 18),
-                      label: const Text('Create Backup'),
                     ),
                   ),
                 ],
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: 14),
+
+              // 2. Segmented Time Switcher: 7D | 30D | MOM | YTD
+              Container(
+                decoration: BoxDecoration(
+                  color: AppColors.surface,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: AppColors.line),
+                ),
+                padding: const EdgeInsets.all(4),
+                child: Row(
+                  children: _periods.map((p) {
+                    final isSelected = _activePeriod == p;
+                    return Expanded(
+                      child: GestureDetector(
+                        onTap: () {
+                          setState(() {
+                            _activePeriod = p;
+                          });
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            color: isSelected ? AppColors.accentBg : Colors.transparent,
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(
+                              color: isSelected ? AppColors.accent.withOpacity(0.5) : Colors.transparent,
+                            ),
+                          ),
+                          child: Text(
+                            p,
+                            style: TextStyle(
+                              color: isSelected ? AppColors.accent : AppColors.text3,
+                              fontSize: 12,
+                              fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ),
+              const SizedBox(height: 14),
+
+              // 3. 4-Card Stats Grid
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildMetricCard(
+                      label: 'Inflow',
+                      value: '+${formatCurrency(inflow, isPrivate: isPrivate)}',
+                      valueColor: AppColors.income,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: _buildMetricCard(
+                      label: 'Outflow',
+                      value: '-${formatCurrency(outflow, isPrivate: isPrivate)}',
+                      valueColor: AppColors.expense,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildMetricCard(
+                      label: 'Net Savings',
+                      value: formatCurrency(netSavings, isPrivate: isPrivate),
+                      valueColor: netSavings >= 0 ? AppColors.income : AppColors.expense,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: _buildMetricCard(
+                      label: 'Savings Rate',
+                      value: '$savingsRate%',
+                      valueColor: AppColors.accent,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 18),
+
+              // 4. Cash Flow Chart Section
+              const Text(
+                'CASH FLOW (INFLOW VS OUTFLOW)',
+                style: TextStyle(
+                  color: AppColors.text3,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 1.1,
+                ),
+              ),
+              const SizedBox(height: 10),
+              const FlowBarChart(),
+              const SizedBox(height: 18),
+
+              // 5. Where It Went (Donut Chart & Legend)
+              const Text(
+                'WHERE IT WENT',
+                style: TextStyle(
+                  color: AppColors.text3,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 1.1,
+                ),
+              ),
+              const SizedBox(height: 10),
+              const CategoryDonutChart(),
+              const SizedBox(height: 18),
+
+              // 6. Top Merchants Ranked List
+              _buildTopMerchantsSection(isPrivate: isPrivate),
+              const SizedBox(height: 18),
+
+              // 7. Proactive Coach Insights
+              _buildCoachInsightsSection(context),
+              const SizedBox(height: 24),
             ],
           ),
         ),
       ),
     );
   }
-}
 
-class _ForecastStat extends StatelessWidget {
-  final String label;
-  final String value;
+  Widget _buildMetricCard({
+    required String label,
+    required String value,
+    required Color valueColor,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.line),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: const TextStyle(color: AppColors.text3, fontSize: 11),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            value,
+            style: TextStyle(
+              color: valueColor,
+              fontSize: 16,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
-  const _ForecastStat({required this.label, required this.value});
+  Widget _buildTopMerchantsSection({required bool isPrivate}) {
+    final merchants = [
+      {'rank': '1', 'name': 'Fresh Corner Supermarket', 'volume': 3450.0, 'count': 8},
+      {'rank': '2', 'name': 'TotalEnergies Bole', 'volume': 2400.0, 'count': 3},
+      {'rank': '3', 'name': 'Tomoca Coffee House', 'volume': 980.0, 'count': 11},
+      {'rank': '4', 'name': 'Ethio Telecom Fibre', 'volume': 1400.0, 'count': 1},
+    ];
 
-  @override
-  Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label, style: AppTypography.labelSmall.copyWith(color: AppColors.textMuted)),
-        const SizedBox(height: 4),
-        Text(value, style: AppTypography.titleMedium.copyWith(fontWeight: FontWeight.bold)),
+        const Text(
+          'TOP MERCHANTS',
+          style: TextStyle(
+            color: AppColors.text3,
+            fontSize: 11,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 1.1,
+          ),
+        ),
+        const SizedBox(height: 10),
+        Container(
+          decoration: BoxDecoration(
+            color: AppColors.surface,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: AppColors.line),
+          ),
+          child: ListView.separated(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: merchants.length,
+            separatorBuilder: (_, __) => const Divider(color: AppColors.line, height: 1),
+            itemBuilder: (context, index) {
+              final m = merchants[index];
+              return ListTile(
+                contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+                leading: Container(
+                  width: 28,
+                  height: 28,
+                  decoration: BoxDecoration(
+                    color: AppColors.surface2,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  alignment: Alignment.center,
+                  child: Text(
+                    m['rank'] as String,
+                    style: const TextStyle(
+                      color: AppColors.text2,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                title: Text(
+                  m['name'] as String,
+                  style: const TextStyle(
+                    color: AppColors.text,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                subtitle: Text(
+                  '${m['count']} transactions',
+                  style: const TextStyle(color: AppColors.text3, fontSize: 11),
+                ),
+                trailing: Text(
+                  formatCurrency(m['volume'] as double, isPrivate: isPrivate),
+                  style: const TextStyle(
+                    color: AppColors.text,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
       ],
+    );
+  }
+
+  Widget _buildCoachInsightsSection(BuildContext context) {
+    final insights = [
+      'Food & Dining made up 34% of your outflow this month, 6% lower than last month.',
+      'You had 0 unaccounted balance drops since you started logging cash withdrawals.',
+      'Switching grocery trips to bi-weekly saved an estimated ETB 650 in impulse purchases.',
+    ];
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.line),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.auto_awesome_rounded, color: AppColors.accent, size: 16),
+              SizedBox(width: 8),
+              Text(
+                'Coach observations',
+                style: TextStyle(
+                  color: AppColors.accent,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          ...insights.map(
+            (ins) => Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    margin: const EdgeInsets.only(top: 6, right: 8),
+                    width: 5,
+                    height: 5,
+                    decoration: const BoxDecoration(
+                      color: AppColors.accent,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  Expanded(
+                    child: Text(
+                      ins,
+                      style: const TextStyle(
+                        color: AppColors.text2,
+                        fontSize: 12,
+                        height: 1.4,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 4),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              style: FilledButton.styleFrom(
+                backgroundColor: AppColors.surface2,
+                foregroundColor: AppColors.accent,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  side: const BorderSide(color: AppColors.line),
+                ),
+                padding: const EdgeInsets.symmetric(vertical: 12),
+              ),
+              icon: const Icon(Icons.chat_bubble_outline_rounded, size: 16),
+              label: const Text(
+                'Ask your AI coach',
+                style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+              ),
+              onPressed: () => context.push('/coach'),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

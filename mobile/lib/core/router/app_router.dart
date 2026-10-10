@@ -9,19 +9,23 @@ import '../../features/onboarding/biometric_lock_screen.dart';
 import '../../features/onboarding/battery_optimization_screen.dart';
 import '../../features/home/main_shell.dart';
 import '../../features/home/home_screen.dart';
+import '../../features/home/more_screen.dart';
 import '../../features/activity/activity_screen.dart';
+import '../../features/activity/accounts_screen.dart';
 import '../../features/activity/review_inbox_screen.dart';
+import '../../features/debts/debts_screen.dart';
 import '../../features/plan/plan_screen.dart';
 import '../../features/insights/insights_screen.dart';
 import '../../features/ai_chat/ai_chat_screen.dart';
 import '../../features/ai_chat/ai_memory_screen.dart';
+import '../../features/settings/settings_screen.dart';
 
 final _rootNavigatorKey = GlobalKey<NavigatorState>(debugLabel: 'root');
 final _homeNavigatorKey = GlobalKey<NavigatorState>(debugLabel: 'home');
 final _activityNavigatorKey = GlobalKey<NavigatorState>(debugLabel: 'activity');
 final _planNavigatorKey = GlobalKey<NavigatorState>(debugLabel: 'plan');
 final _insightsNavigatorKey = GlobalKey<NavigatorState>(debugLabel: 'insights');
-final _coachNavigatorKey = GlobalKey<NavigatorState>(debugLabel: 'coach');
+final _moreNavigatorKey = GlobalKey<NavigatorState>(debugLabel: 'more');
 
 class RouterNotifier extends ChangeNotifier {
   final Ref _ref;
@@ -105,6 +109,26 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         builder: (context, state) => const ReviewInboxScreen(),
       ),
       GoRoute(
+        path: '/accounts',
+        parentNavigatorKey: _rootNavigatorKey,
+        builder: (context, state) => const AccountsScreen(),
+      ),
+      GoRoute(
+        path: '/debts',
+        parentNavigatorKey: _rootNavigatorKey,
+        builder: (context, state) => const DebtsScreen(),
+      ),
+      GoRoute(
+        path: '/settings',
+        parentNavigatorKey: _rootNavigatorKey,
+        builder: (context, state) => const SettingsScreen(),
+      ),
+      GoRoute(
+        path: '/coach',
+        parentNavigatorKey: _rootNavigatorKey,
+        builder: (context, state) => const AiChatScreen(),
+      ),
+      GoRoute(
         path: '/ai-memory',
         parentNavigatorKey: _rootNavigatorKey,
         builder: (context, state) => const AiMemoryScreen(),
@@ -159,11 +183,11 @@ final appRouterProvider = Provider<GoRouter>((ref) {
             ],
           ),
           StatefulShellBranch(
-            navigatorKey: _coachNavigatorKey,
+            navigatorKey: _moreNavigatorKey,
             routes: [
               GoRoute(
-                path: '/coach',
-                builder: (context, state) => const AiChatScreen(),
+                path: '/more',
+                builder: (context, state) => const MoreScreen(),
               ),
             ],
           ),

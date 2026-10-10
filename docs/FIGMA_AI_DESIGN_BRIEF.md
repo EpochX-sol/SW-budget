@@ -1,5 +1,5 @@
 # SW-Budget: Complete Product & Domain Design Brief
-> **Target Audience for this Document:** UI/UX Designers and AI Design Generators (e.g., Figma AI, Galileo, v0, Relume).  
+> **Target Audience for this Document:** UI/UX Designers and AI Design Generators    
 > **Goal:** Provide exhaustive context on all financial entities, data models, workflows, and domain signals in SW-Budget without imposing rigid wireframe constraints, empowering the designer to craft an optimal, modern user experience.
 
 ---

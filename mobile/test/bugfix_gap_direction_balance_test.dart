@@ -2,7 +2,6 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sw_budget/data/parser/sms_message_classifier.dart';
 import 'package:sw_budget/data/parser/financial_parser.dart';
-import 'package:sw_budget/data/parser/pattern_parser.dart';
 import 'package:sw_budget/data/local/app_database.dart';
 import 'package:sw_budget/data/sms/ingestion_pipeline.dart';
 import 'package:sw_budget/data/sms/models/raw_financial_message.dart';
@@ -111,8 +110,8 @@ void main() {
       // Ingest in chronological order
       await pipeline.processMessage(msg1);
       final r2 = await pipeline.processMessage(msg2);
-      final r3 = await pipeline.processMessage(msg3);
-      final r4 = await pipeline.processMessage(msg4);
+      await pipeline.processMessage(msg3);
+      await pipeline.processMessage(msg4);
 
       // Verified: NO false gaps!
       expect(r2?['balance_chain_ok'], equals(1));

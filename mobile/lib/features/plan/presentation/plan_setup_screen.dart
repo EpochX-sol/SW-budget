@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import '../../../domain/use_cases/adaptive_spending_engine.dart';
 import '../models/spending_plan_models.dart';
 
 class PlanSetupScreen extends StatefulWidget {
@@ -16,7 +15,6 @@ class _PlanSetupScreenState extends State<PlanSetupScreen> {
 
   int _selectedPresetDays = 14; // 2 weeks default
   double _reservePercent = 5.0;
-  RolloverMode _rolloverMode = RolloverMode.spreadEvenly;
 
   final List<FixedExpense> _fixedExpenses = [
     const FixedExpense(id: 'fe_1', planId: '', title: 'Apartment Rent / Wifi', amount: 1500),

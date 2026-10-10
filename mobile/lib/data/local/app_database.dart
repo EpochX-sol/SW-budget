@@ -834,6 +834,11 @@ class AppDatabase {
     return result.map((row) => Map<String, dynamic>.from(row)).toList();
   }
 
+  void deleteUnparsedMessage(String id) {
+    _db.execute('DELETE FROM local_unparsed_messages WHERE id = ?;', [id]);
+    _notify(DatabaseTable.unparsedMessages);
+  }
+
   void _notify(DatabaseTable table) {
     if (!_changeController.isClosed) {
       _changeController.add(table);
