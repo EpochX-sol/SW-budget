@@ -80,7 +80,7 @@ class SmsTransactionSource implements TransactionSource {
       final List<SmsMessage> messages = await _telephony.getInboxSms(
         columns: [SmsColumn.ID, SmsColumn.ADDRESS, SmsColumn.BODY, SmsColumn.DATE],
         filter: SmsFilter.where(SmsColumn.DATE).greaterThanOrEqualTo(since.millisecondsSinceEpoch.toString()),
-        sortOrder: [OrderBy(SmsColumn.DATE, sort: Sort.DESC)],
+        sortOrder: [OrderBy(SmsColumn.DATE, sort: Sort.ASC)],
       );
 
       final results = <RawFinancialMessage>[];

@@ -26,6 +26,13 @@ final financialParserProvider = FutureProvider<FinancialParser>((ref) async {
   } catch (_) {
     // Graceful fallback for headless test runner
   }
+  try {
+    final patternsJson = await rootBundle.loadString('assets/templates/sms_patterns.json');
+    final banksJson = await rootBundle.loadString('assets/templates/banks.json');
+    parser.loadNamedPatterns(patternsJson: patternsJson, banksJson: banksJson);
+  } catch (_) {
+    // Graceful fallback if full named patterns cannot be loaded
+  }
   return parser;
 });
 

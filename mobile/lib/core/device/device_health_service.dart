@@ -125,6 +125,17 @@ class DeviceHealthService {
       await _batteryChannel.invokeMethod('stopForegroundSync');
     } catch (_) {}
   }
+
+  /// Open Android Notification Access settings so user can authorize banking app notification listening
+  Future<bool> openNotificationAccessSettings() async {
+    try {
+      final bool? success =
+          await _batteryChannel.invokeMethod<bool>('openNotificationAccessSettings');
+      return success ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
 }
 
 final deviceHealthServiceProvider = Provider<DeviceHealthService>((ref) {

@@ -45,7 +45,15 @@ DynamicLibrary _openSqlCipherOnWindows() {
   try {
     return DynamicLibrary.open('sqlcipher.dll');
   } catch (_) {
-    return DynamicLibrary.open('sqlite3.dll');
+    try {
+      return DynamicLibrary.open('sqlite3.dll');
+    } catch (_) {
+      try {
+        return DynamicLibrary.open('winsqlite3.dll');
+      } catch (_) {
+        return DynamicLibrary.process();
+      }
+    }
   }
 }
 
@@ -434,6 +442,75 @@ class AppDatabase {
     );
     if (result.isEmpty) return null;
     return Map<String, dynamic>.from(result.first);
+  }
+
+  Map<String, dynamic>? getLatestTransactionBefore({
+    required String accountId,
+    required DateTime beforeTime,
+  }) {
+    final beforeIso = beforeTime.toIso8601String();
+    final result = _db.select(
+      'SELECT * FROM local_transactions WHERE account_id = ? AND occurred_at <= ? AND deleted_at IS NULL ORDER BY occurred_at DESC, created_at DESC LIMIT 1;',
+      [accountId, beforeIso],
+    );
+    if (result.isEmpty) return null;
+    return Map<String, dynamic>.from(result.first);
+  }
+
+  double? getLatestBalanceForAccount(String accountId) {
+    final result = _db.select(
+      'SELECT balance_after FROM local_transactions WHERE account_id = ? AND balance_after IS NOT NULL AND deleted_at IS NULL ORDER BY occurred_at DESC, created_at DESC LIMIT 1;',
+      [accountId],
+    );
+    if (result.isEmpty) return null;
+    return (result.first['balance_after'] as num?)?.toDouble();
+  }
+
+  void syncAccountBalanceFromLatestTransaction(String accountId) {
+    final latestBal = getLatestBalanceForAccount(accountId);
+    if (latestBal != null) {
+      final acc = getAccountById(accountId);
+      if (acc != null) {
+        upsertAccount(
+          id: accountId,
+          provider: acc['provider'] as String,
+          name: acc['name'] as String,
+          accountMask: acc['account_mask'] as String?,
+          lastKnownBalance: latestBal,
+          isSavings: acc['is_savings'] == 1,
+        );
+      }
+    }
+  }
+
+  /// Automatically fixes existing corrupted transactions (like non-ledger airtime acknowledgements
+  /// mistakenly captured as 100,000 ETB expenses) and syncs all accounts to their latest chronological balances.
+  void repairCorruptedTransactionsAndBalances() {
+    try {
+      // 1. Remove non-ledger airtime delivery receipts or corrupted 100k records
+      _db.execute('''
+        DELETE FROM local_transactions 
+        WHERE (raw_body LIKE '%ተሞልቶሎታል%' OR raw_body LIKE '%ATM withdraw%')
+           OR (amount >= 50000 AND (counterparty LIKE '%ብር%' OR raw_body LIKE '%ተሞልቶሎታል%'));
+      ''');
+
+      // 2. Clear false balance chain gaps created by previous inverted historical processing
+      _db.execute('''
+        UPDATE local_transactions 
+        SET balance_chain_ok = 1, gap_before_amount = NULL 
+        WHERE gap_before_amount IS NOT NULL;
+      ''');
+
+      // 3. Recalculate each account's balance from its newest transaction
+      final accounts = getAccounts();
+      for (final acc in accounts) {
+        final accId = acc['id'] as String;
+        syncAccountBalanceFromLatestTransaction(accId);
+      }
+
+      _notify(DatabaseTable.transactions);
+      _notify(DatabaseTable.accounts);
+    } catch (_) {}
   }
 
   List<Map<String, dynamic>> getDirtyTransactions({int limit = 100}) {

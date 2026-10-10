@@ -88,18 +88,23 @@ class IngestionPipeline {
     // 4. Resolve or Auto-Provision Account
     final accountId = _resolveOrCreateAccount(txn.provider, txn.balanceAfter);
 
-    // 5. Balance-Chain Mathematical Evaluation
-    final prevTxn = _database.getLatestTransactionForAccount(accountId);
+    // 5. Balance-Chain Mathematical Evaluation strictly against preceding chronological transaction
+    final prevTxn = _database.getLatestTransactionBefore(
+      accountId: accountId,
+      beforeTime: msg.receivedAt,
+    );
     final prevBalance = prevTxn != null
         ? (prevTxn['balance_after'] as num?)?.toDouble()
         : null;
 
-    final chainResult = BalanceChainVerifier.verify(
-      amount: txn.amount,
-      type: txn.type,
-      currentBalanceAfter: txn.balanceAfter,
-      previousBalanceAfter: prevBalance,
-    );
+    final chainResult = (prevBalance != null && txn.balanceAfter != null)
+        ? BalanceChainVerifier.verify(
+            amount: txn.amount,
+            type: txn.type,
+            currentBalanceAfter: txn.balanceAfter,
+            previousBalanceAfter: prevBalance,
+          )
+        : const BalanceChainResult(isChainOk: true, gapAmount: null, needsReview: false);
 
     // 6. Persist Transaction to Encrypted Database
     final transactionId = const Uuid().v4();
@@ -128,20 +133,8 @@ class IngestionPipeline {
       isDirty: true,
     );
 
-    // 7. Update Account's Last Known Balance
-    if (txn.balanceAfter != null) {
-      final account = _database.getAccountById(accountId);
-      if (account != null) {
-        _database.upsertAccount(
-          id: accountId,
-          provider: account['provider'] as String,
-          name: account['name'] as String,
-          accountMask: account['account_mask'] as String?,
-          lastKnownBalance: txn.balanceAfter,
-          isSavings: account['is_savings'] == 1,
-        );
-      }
-    }
+    // 7. Synchronize Account Balance to the most recent chronological transaction
+    _database.syncAccountBalanceFromLatestTransaction(accountId);
 
     _parsedStreamController.add(parseResult);
 

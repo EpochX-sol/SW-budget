@@ -80,6 +80,15 @@ class MainActivity : FlutterFragmentActivity() {
                     SyncForegroundService.stopService(this)
                     result.success(true)
                 }
+                "openNotificationAccessSettings" -> {
+                    try {
+                        val intent = Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")
+                        startActivity(intent)
+                        result.success(true)
+                    } catch (e: Exception) {
+                        result.error("ERR", e.message, null)
+                    }
+                }
                 else -> result.notImplemented()
             }
         }
@@ -140,7 +149,7 @@ class MainActivity : FlutterFragmentActivity() {
         )
         val selection = "${Telephony.Sms.DATE} >= ?"
         val selectionArgs = arrayOf(sinceTimestamp.toString())
-        val sortOrder = "${Telephony.Sms.DATE} DESC"
+        val sortOrder = "${Telephony.Sms.DATE} ASC"
 
         try {
             contentResolver.query(uri, projection, selection, selectionArgs, sortOrder)?.use { cursor ->

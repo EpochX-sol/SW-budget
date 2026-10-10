@@ -76,6 +76,16 @@ class PatternParser {
             'type': pattern.type.toUpperCase().contains('CREDIT') ? 'income' : 'expense',
           };
 
+          // 0. Dynamic Type Override if pattern regex captures a 'type' named group
+          if (match.groupNames.contains('type')) {
+            final rawType = match.namedGroup('type');
+            final normalized = _normalizeType(rawType);
+            if (normalized != null) {
+              extracted['sourceType'] = normalized;
+              extracted['type'] = normalized.contains('CREDIT') ? 'income' : 'expense';
+            }
+          }
+
           // 1. Amount
           if (match.groupNames.contains('amount')) {
             final cleanedAmount = _cleanNumber(match.namedGroup('amount'));
@@ -108,11 +118,15 @@ class PatternParser {
             }
           }
 
-          // 5. Counterparty (receiver / creditor / from / to)
+          // 5. Counterparty (receiver / creditor / merchant / phone / from / to)
           if (match.groupNames.contains('receiver')) {
             extracted['counterparty'] = match.namedGroup('receiver')?.trim();
           } else if (match.groupNames.contains('creditor')) {
             extracted['counterparty'] = match.namedGroup('creditor')?.trim();
+          } else if (match.groupNames.contains('merchant')) {
+            extracted['counterparty'] = match.namedGroup('merchant')?.trim();
+          } else if (match.groupNames.contains('phone')) {
+            extracted['counterparty'] = match.namedGroup('phone')?.trim();
           } else if (match.groupNames.contains('from')) {
             extracted['counterparty'] = match.namedGroup('from')?.trim();
           } else if (match.groupNames.contains('to')) {
@@ -189,5 +203,13 @@ class PatternParser {
     cleaned = cleaned.replaceAll(RegExp(r'[^0-9.]$'), '');
     cleaned = cleaned.replaceAll(RegExp(r'\.+$'), '');
     return cleaned;
+  }
+
+  static String? _normalizeType(String? rawType) {
+    if (rawType == null) return null;
+    final lower = rawType.toLowerCase();
+    if (lower.contains('debit')) return 'DEBIT';
+    if (lower.contains('credit')) return 'CREDIT';
+    return null;
   }
 }

@@ -8,6 +8,7 @@ import 'normalizer/text_normalizer.dart';
 import 'normalizer/bank_sender_matcher.dart';
 import 'pattern_parser.dart';
 import 'fallback_sms_parser.dart';
+import 'sms_message_classifier.dart';
 
 /// Pure Dart financial message parser supporting:
 /// 1. Totals' 3,238-line named regex patterns with fee breakdown extraction
@@ -50,6 +51,11 @@ class FinancialParser {
 
   /// Detects whether the sender and message content indicate a financial transaction.
   bool isFinancialMessage(String sender, String body) {
+    // 0. Filter out non-ledger notices (e.g. Telebirr airtime receipt acknowledgements or ATM auth codes)
+    if (SmsMessageClassifier.isNonLedgerNotice(body)) {
+      return false;
+    }
+
     final sLower = sender.toLowerCase().trim();
     final bLower = body.toLowerCase();
 

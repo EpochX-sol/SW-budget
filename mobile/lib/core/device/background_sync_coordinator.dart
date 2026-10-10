@@ -5,6 +5,7 @@ import '../../data/local/app_database.dart';
 import '../../data/local/database_provider.dart';
 import '../../data/sms/ingestion_pipeline.dart';
 import '../../data/sms/ingestion_provider.dart';
+import '../../data/sms/models/raw_financial_message.dart';
 import '../../data/sms/sources/sms_transaction_source.dart';
 import '../../data/sync/sync_engine.dart';
 import '../../data/sync/sync_provider.dart';
@@ -68,7 +69,11 @@ class BackgroundSyncCoordinator {
         await _deviceHealth.startForegroundSync(totalCount: historicalMessages.length);
       }
 
-      for (final msg in historicalMessages) {
+      // Sort messages chronologically (oldest first) so running balances and chains advance forward
+      final sortedMessages = List<RawFinancialMessage>.from(historicalMessages)
+        ..sort((a, b) => a.receivedAt.compareTo(b.receivedAt));
+
+      for (final msg in sortedMessages) {
         final processed = await _ingestionPipeline.processMessage(msg);
         if (processed != null) {
           importedCount++;

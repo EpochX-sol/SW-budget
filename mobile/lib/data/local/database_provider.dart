@@ -6,5 +6,7 @@ import 'app_database.dart';
 final databaseProvider = FutureProvider<AppDatabase>((ref) async {
   final secureStorage = ref.watch(secureStorageProvider);
   final passphrase = await secureStorage.getOrGenerateDbPassphrase();
-  return AppDatabase.openEncrypted(passphrase: passphrase);
+  final db = await AppDatabase.openEncrypted(passphrase: passphrase);
+  db.repairCorruptedTransactionsAndBalances();
+  return db;
 });
