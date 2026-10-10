@@ -4,24 +4,24 @@ import 'package:flutter/material.dart';
 /// Palette inspired by Ethiopia: Emerald/Teal, Gold/Amber, Deep Obsidian.
 abstract class AppColors {
   // Brand Colors
-  static const Color primary = Color(0xFF0F766E); // Deep Emerald/Teal
-  static const Color primaryLight = Color(0xFF2DD4BF); // Vibrant Mint/Cyan
-  static const Color primaryDark = Color(0xFF115E59);
+  static const Color primary = Color(0xFF4F46E5); // Indigo
+  static const Color primaryLight = Color(0xFF6366F1); // Violet
+  static const Color primaryDark = Color(0xFF3730A3);
   
   static const Color secondary = Color(0xFFF59E0B); // Ethiopian Gold/Amber
   static const Color secondaryLight = Color(0xFFFBBF24);
   static const Color secondaryDark = Color(0xFFD97706);
 
-  // Background & Surfaces (Dark Theme Default)
-  static const Color background = Color(0xFF0B1220); // Deep Obsidian
-  static const Color surface = Color(0xFF131D31); // Elevated Card Surface
-  static const Color surfaceElevated = Color(0xFF1B2844); // Top-level Modal Surface
-  static const Color surfaceLow = Color(0xFF0F172A);
+  // Background & Surfaces (Dark Theme Default - Sourced from Totals)
+  static const Color background = Color(0xFF161A26); // Totals darkBg
+  static const Color surface = Color(0xFF1E2230); // Totals darkSurface
+  static const Color surfaceElevated = Color(0xFF2A3040); // Totals elevated
+  static const Color surfaceLow = Color(0xFF11141E);
 
   // Borders & Dividers
-  static const Color border = Color(0xFF1E293B);
-  static const Color borderSubtle = Color(0xFF172033);
-  static const Color borderHighlight = Color(0xFF334155);
+  static const Color border = Color(0xFF34384A); // Totals darkBorder
+  static const Color borderSubtle = Color(0xFF232736);
+  static const Color borderHighlight = Color(0xFF474E66);
 
   // Text & Typography Colors
   static const Color textPrimary = Color(0xFFF8FAFC);
@@ -48,5 +48,19 @@ abstract class AppColors {
   static const Color bankCbe = Color(0xFF8B1538); // CBE Purple/Wine
   static const Color bankTelebirr = Color(0xFF0284C7); // Telebirr Sky Blue
   static const Color bankAbyssinia = Color(0xFFF59E0B); // BoA Gold
+  static const Color bankAwash = Color(0xFF1E3A8A); // Awash Navy Blue
   static const Color bankCash = Color(0xFF10B981); // Cash Green
+
+  // Curated Gradients
+  static const LinearGradient primaryGradient = LinearGradient(
+    colors: [Color(0xFF4F46E5), Color(0xFF6366F1)],
+    begin: Alignment.topLeft,
+    end: Alignment.bottomRight,
+  );
+
+  static const LinearGradient cardGradient = LinearGradient(
+    colors: [Color(0xFF1E2230), Color(0xFF181C28)],
+    begin: Alignment.topLeft,
+    end: Alignment.bottomRight,
+  );
 }

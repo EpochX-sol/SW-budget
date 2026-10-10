@@ -137,37 +137,121 @@ class _EnvelopesTab extends ConsumerWidget {
         }
 
         final spendMap = spendAsync.asData?.value ?? {};
+        final safeToSpend = ref.watch(safeToSpendProvider);
 
-        return ListView.separated(
+        return ListView(
           padding: const EdgeInsets.all(16.0),
-          itemCount: limits.length,
-          separatorBuilder: (_, __) => const SizedBox(height: 12),
-          itemBuilder: (context, index) {
-            final limit = limits[index];
-            final scopeType = limit['scope_type'] as String? ?? 'category';
-            final scopeId = limit['scope_id'] as String?;
-            final limitAmount = (limit['amount'] as num?)?.toDouble() ?? 0.0;
-            final mode = limit['mode'] as String? ?? 'soft';
+          children: [
+            // Executive Budget Health Summary
+            Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: AppColors.surface,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: AppColors.border),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'DAILY SAFE SPEND ALLOWANCE',
+                        style: AppTypography.labelSmall.copyWith(
+                          color: AppColors.textMuted,
+                          letterSpacing: 1.2,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: (safeToSpend.pace == SpendingPace.onTrack || safeToSpend.pace == SpendingPace.ahead)
+                              ? AppColors.incomeSurface
+                              : (safeToSpend.pace == SpendingPace.caution
+                                  ? AppColors.warningSurface
+                                  : AppColors.expenseSurface),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          (safeToSpend.pace == SpendingPace.onTrack || safeToSpend.pace == SpendingPace.ahead)
+                              ? 'ON TRACK'
+                              : (safeToSpend.pace == SpendingPace.caution ? 'CAUTION' : 'DEFICIT'),
+                          style: AppTypography.labelSmall.copyWith(
+                            color: (safeToSpend.pace == SpendingPace.onTrack || safeToSpend.pace == SpendingPace.ahead)
+                                ? AppColors.income
+                                : (safeToSpend.pace == SpendingPace.caution
+                                    ? AppColors.secondary
+                                    : AppColors.expense),
+                            fontWeight: FontWeight.bold,
+                            fontSize: 10,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.baseline,
+                    textBaseline: TextBaseline.alphabetic,
+                    children: [
+                      Text(
+                        'ETB ${safeToSpend.safeToday.toStringAsFixed(0)}',
+                        style: AppTypography.displayMedium.copyWith(fontWeight: FontWeight.w800),
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        '/ day',
+                        style: AppTypography.bodySmall.copyWith(color: AppColors.textMuted),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    '${safeToSpend.daysRemaining} days remaining • ETB ${safeToSpend.remainingBudget.toStringAsFixed(0)} unallocated budget left this month',
+                    style: AppTypography.bodySmall.copyWith(color: AppColors.textSecondary),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
 
-            // Find spending for this limit
-            double spent = 0.0;
-            if (scopeType == 'overall') {
-              spent = spendMap['_total_expense'] ?? 0.0;
-            } else if (scopeId != null) {
-              spent = spendMap[scopeId] ?? 0.0;
-            }
+            Text(
+              'Envelopes & Spending Limits',
+              style: AppTypography.titleMedium.copyWith(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 12),
 
-            final progress = BudgetMathService.calculateLimitProgress(
-              spent: spent,
-              limitAmount: limitAmount,
-            );
+            ...limits.map((limit) {
+              final scopeType = limit['scope_type'] as String? ?? 'category';
+              final scopeId = limit['scope_id'] as String?;
+              final limitAmount = (limit['amount'] as num?)?.toDouble() ?? 0.0;
+              final mode = limit['mode'] as String? ?? 'soft';
 
-            return _LimitEnvelopeCard(
-              title: scopeType == 'overall' ? 'Overall Monthly Budget' : 'Category Envelope',
-              progress: progress,
-              mode: mode,
-            );
-          },
+              // Find spending for this limit
+              double spent = 0.0;
+              if (scopeType == 'overall') {
+                spent = spendMap['_total_expense'] ?? 0.0;
+              } else if (scopeId != null) {
+                spent = spendMap[scopeId] ?? 0.0;
+              }
+
+              final progress = BudgetMathService.calculateLimitProgress(
+                spent: spent,
+                limitAmount: limitAmount,
+              );
+
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 12.0),
+                child: _LimitEnvelopeCard(
+                  title: scopeType == 'overall' ? 'Overall Monthly Budget' : 'Category Envelope',
+                  progress: progress,
+                  mode: mode,
+                ),
+              );
+            }),
+          ],
         );
       },
       loading: () => const Center(child: CircularProgressIndicator(color: AppColors.primaryLight)),

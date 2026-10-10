@@ -41,9 +41,9 @@ class MainShell extends StatelessWidget {
               label: 'Home',
             ),
             NavigationDestination(
-              icon: Icon(Icons.receipt_long_outlined, color: AppColors.textSecondary),
-              selectedIcon: Icon(Icons.receipt_long_rounded, color: AppColors.primaryLight),
-              label: 'Activity',
+              icon: Icon(Icons.account_balance_wallet_outlined, color: AppColors.textSecondary),
+              selectedIcon: Icon(Icons.account_balance_wallet_rounded, color: AppColors.primaryLight),
+              label: 'Money',
             ),
             NavigationDestination(
               icon: Icon(Icons.savings_outlined, color: AppColors.textSecondary),
