@@ -36,6 +36,11 @@ model User {
   aiUsage         AiUsage[]
   aiMemories      AiMemory[]
   auditLogs       AuditLog[]
+  budgetPlans     BudgetPlan[]
+  reimbursements  Reimbursement[]
+  contactPersons  ContactPerson[]
+  loanDebts       LoanDebt[]
+  loanRepayments  LoanRepayment[]
 
   @@map("users")
 }
@@ -139,6 +144,9 @@ model Transaction {
   category           Category? @relation(fields: [categoryId], references: [id])
   parentTxn          Transaction? @relation("FeeLink", fields: [parentTxnId], references: [id])
   childTxns          Transaction[] @relation("FeeLink")
+  expenseReimbursements Reimbursement[] @relation("ExpenseReimbursements")
+  creditReimbursements  Reimbursement[] @relation("CreditReimbursements")
+  loanRepayments        LoanRepayment[]
 
   @@unique([userId, dedupeKey])
   @@index([userId, occurredAt(sort: Desc)])
@@ -374,4 +382,173 @@ model AuditLog {
   @@index([createdAt(sort: Desc)])
   @@map("audit_log")
 }
+
+enum RolloverMode {
+  SPREAD_EVENLY
+  NEXT_DAY
+  WEEK_ONLY
+  TO_SAVINGS
+}
+
+model BudgetPlan {
+  id              String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId          String          @map("user_id") @db.Uuid
+  name            String          @default("My Spending Plan")
+  totalAmount     Decimal         @map("total_amount") @db.Decimal(14, 2)
+  startDate       DateTime        @map("start_date") @db.Date
+  endDate         DateTime        @map("end_date") @db.Date
+  rolloverMode    RolloverMode    @default(SPREAD_EVENLY) @map("rollover_mode")
+  reservePercent  Decimal         @default(0) @map("reserve_percent") @db.Decimal(5, 2)
+  savingGoal      Decimal         @default(0) @map("saving_goal") @db.Decimal(14, 2)
+  minDailyFloor   Decimal         @default(0) @map("min_daily_floor") @db.Decimal(14, 2)
+  dayWeights      Json?           @map("day_weights")
+  active          Boolean         @default(true)
+  changeSeq       BigInt          @map("change_seq")
+  createdAt       DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime        @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt       DateTime?       @map("deleted_at") @db.Timestamptz(6)
+
+  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fixedExpenses   FixedExpense[]
+  categoryLimits  CategoryLimit[]
+  snapshots       PlanSnapshot[]
+
+  @@index([userId, active])
+  @@index([userId, changeSeq])
+  @@map("budget_plans")
+}
+
+model FixedExpense {
+  id        String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  planId    String     @map("plan_id") @db.Uuid
+  title     String
+  amount    Decimal    @db.Decimal(14, 2)
+  dueDate   DateTime?  @map("due_date") @db.Date
+  paid      Boolean    @default(false)
+  changeSeq BigInt     @map("change_seq")
+  createdAt DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  deletedAt DateTime?  @map("deleted_at") @db.Timestamptz(6)
+
+  plan      BudgetPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  @@index([planId])
+  @@map("fixed_expenses")
+}
+
+model CategoryLimit {
+  id        String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  planId    String     @map("plan_id") @db.Uuid
+  category  String
+  amount    Decimal    @db.Decimal(14, 2)
+  changeSeq BigInt     @map("change_seq")
+  createdAt DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  deletedAt DateTime?  @map("deleted_at") @db.Timestamptz(6)
+
+  plan      BudgetPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  @@unique([planId, category])
+  @@map("category_limits")
+}
+
+model PlanSnapshot {
+  id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  planId       String     @map("plan_id") @db.Uuid
+  snapshotDate DateTime   @map("snapshot_date") @db.Date
+  payload      Json
+  computedAt   DateTime   @default(now()) @map("computed_at") @db.Timestamptz(6)
+
+  plan         BudgetPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  @@unique([planId, snapshotDate])
+  @@map("plan_snapshots")
+}
+
+model Reimbursement {
+  id           String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId       String      @map("user_id") @db.Uuid
+  expenseTxnId String      @map("expense_txn_id") @db.Uuid
+  creditTxnId  String      @map("credit_txn_id") @db.Uuid
+  amount       Decimal     @db.Decimal(14, 2)
+  note         String?
+  changeSeq    BigInt      @map("change_seq")
+  createdAt    DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt    DateTime?   @map("deleted_at") @db.Timestamptz(6)
+
+  user         User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expenseTxn  Transaction @relation("ExpenseReimbursements", fields: [expenseTxnId], references: [id], onDelete: Cascade)
+  creditTxn   Transaction @relation("CreditReimbursements", fields: [creditTxnId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expenseTxnId])
+  @@index([creditTxnId])
+  @@index([userId, changeSeq])
+  @@map("reimbursements")
+}
+
+model ContactPerson {
+  id          String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId      String      @map("user_id") @db.Uuid
+  name        String
+  phoneNumber String?     @map("phone_number")
+  changeSeq   BigInt      @map("change_seq")
+  createdAt   DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt   DateTime?   @map("deleted_at") @db.Timestamptz(6)
+
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  loansDebts  LoanDebt[]
+
+  @@index([userId])
+  @@index([userId, changeSeq])
+  @@map("contact_persons")
+}
+
+model LoanDebt {
+  id             String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId         String          @map("user_id") @db.Uuid
+  personId       String          @map("person_id") @db.Uuid
+  type           String          // lent | borrowed
+  initialAmount  Decimal         @map("initial_amount") @db.Decimal(14, 2)
+  currentBalance Decimal         @map("current_balance") @db.Decimal(14, 2)
+  dueDate        DateTime?       @map("due_date") @db.Date
+  status         String          @default("active")
+  note           String?
+  changeSeq      BigInt          @map("change_seq")
+  createdAt      DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime        @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt      DateTime?       @map("deleted_at") @db.Timestamptz(6)
+
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  person         ContactPerson   @relation(fields: [personId], references: [id], onDelete: Cascade)
+  repayments     LoanRepayment[]
+
+  @@index([userId])
+  @@index([personId])
+  @@index([userId, changeSeq])
+  @@map("loans_debts")
+}
+
+model LoanRepayment {
+  id         String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId     String       @map("user_id") @db.Uuid
+  loanDebtId String       @map("loan_debt_id") @db.Uuid
+  txnId      String?      @map("txn_id") @db.Uuid
+  amount     Decimal      @db.Decimal(14, 2)
+  repaidAt   DateTime     @map("repaid_at") @db.Timestamptz(6)
+  note       String?
+  changeSeq  BigInt       @map("change_seq")
+  createdAt  DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  deletedAt  DateTime?    @map("deleted_at") @db.Timestamptz(6)
+
+  user       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  loanDebt   LoanDebt     @relation(fields: [loanDebtId], references: [id], onDelete: Cascade)
+  transaction Transaction? @relation(fields: [txnId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([loanDebtId])
+  @@index([userId, changeSeq])
+  @@map("loan_repayments")
+}
+
 

@@ -234,6 +234,70 @@ export class FinanceTools {
       month: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`,
     };
   }
+
+  /**
+   * Retrieves active spending plan live snapshot.
+   */
+  async getActivePlanSnapshot(userId: string) {
+    const { spendingPlanService } = await import('../../finance/spending-plan/spending-plan.service.js');
+    const active = await spendingPlanService.getActivePlan(userId);
+    if (!active) {
+      return { has_active_plan: false };
+    }
+    const snap = active.snapshot;
+    return {
+      has_active_plan: true,
+      plan_id: active.plan.id,
+      plan_name: active.plan.name,
+      as_of: snap.asOf,
+      allowance_today: snap.today.allowance,
+      spent_today: snap.today.spent,
+      remaining_today: snap.today.remainingToday,
+      tomorrow_allowance: snap.tomorrow?.allowance ?? snap.today.baseDaily,
+      status: snap.status,
+      projected_overspend: snap.pace.projectedOverspend,
+      days_until_broke: snap.pace.daysUntilBroke,
+      streak: snap.streak,
+    };
+  }
+
+  /**
+   * Simulates proposed daily spend scenario against active plan.
+   */
+  async simulatePlanSpending(userId: string, args: { proposed_spend_amount: number }) {
+    const { spendingPlanService } = await import('../../finance/spending-plan/spending-plan.service.js');
+    const active = await spendingPlanService.getActivePlan(userId);
+    if (!active) {
+      return { has_active_plan: false, error: 'No active spending plan found' };
+    }
+    const sim = await spendingPlanService.simulateSpend(userId, active.plan.id, {
+      proposed_daily_spend: args.proposed_spend_amount,
+    });
+    return {
+      has_active_plan: true,
+      proposed_daily_spend: sim.dailySpend,
+      projected_total: sim.projectedTotal,
+      projected_diff: sim.projectedDiff,
+      days_until_exhausted: sim.daysUntilExhausted,
+      end_status: sim.status,
+    };
+  }
+
+  /**
+   * Queries debts and loans.
+   */
+  async queryLoansDebts(userId: string, args: { status?: string; person_name?: string } = {}) {
+    const { debtsService } = await import('../../finance/debts/debts.service.js');
+    return debtsService.queryDebts(userId, args);
+  }
+
+  /**
+   * Queries reimbursements.
+   */
+  async queryReimbursements(userId: string, args: any = {}) {
+    const { reimbursementService } = await import('../../finance/reimbursements/reimbursement.service.js');
+    return reimbursementService.queryReimbursements(userId, args);
+  }
 }
 
 export const financeTools = new FinanceTools();
@@ -287,4 +351,53 @@ export const GEMINI_TOOL_DECLARATIONS = [
       properties: {},
     },
   },
+  {
+    name: 'get_active_plan_snapshot',
+    description: 'Retrieve the live daily and weekly allowance, tomorrow allowance, pacing status, and streak for the active Adaptive Spending Plan.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {},
+    },
+  },
+  {
+    name: 'simulate_plan_spending',
+    description: 'Mathematically forecast if a proposed daily spend rate will keep the user within budget by the end of their spending plan period.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        proposed_spend_amount: {
+          type: 'NUMBER',
+          description: 'The proposed daily expenditure in ETB',
+        },
+      },
+      required: ['proposed_spend_amount'],
+    },
+  },
+  {
+    name: 'query_loans_debts',
+    description: 'Query who owes the user money (lent) and what debts the user owes others (borrowed), including remaining balances.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        status: {
+          type: 'STRING',
+          enum: ['active', 'settled', 'all'],
+          description: 'Filter debts by status',
+        },
+        person_name: {
+          type: 'STRING',
+          description: 'Optional name of the contact person to filter by',
+        },
+      },
+    },
+  },
+  {
+    name: 'query_reimbursements',
+    description: 'Query expenses that have been reimbursed by friends or counterparties.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {},
+    },
+  },
 ];
+

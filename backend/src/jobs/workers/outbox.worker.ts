@@ -44,6 +44,19 @@ export function createOutboxWorker(): Worker {
     async (job: Job) => {
       // Process outbox dispatch
       console.log(`[Outbox Worker] Dispatched event ${job.name} for user ${job.data.userId}`);
+      if (job.name === 'sync.push') {
+        const activePlan = await prisma.budgetPlan.findFirst({
+          where: { userId: job.data.userId, active: true, deletedAt: null },
+        });
+        if (activePlan) {
+          const { planSnapshotsQueue } = await import('../queues.js');
+          await planSnapshotsQueue.add('rebuild_plan_snapshot', {
+            planId: activePlan.id,
+            userId: job.data.userId,
+            trigger: 'transaction_created',
+          });
+        }
+      }
     },
     {
       connection: redisConnection,

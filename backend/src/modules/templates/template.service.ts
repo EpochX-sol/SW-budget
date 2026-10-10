@@ -95,6 +95,51 @@ export class TemplateService {
       templates: OFFICIAL_TEMPLATES,
     };
   }
+
+  private cachedPatternsBundle: {
+    etag: string;
+    payload: {
+      version: string;
+      hash: string;
+      patterns_count: number;
+      patterns: any[];
+    };
+  } | null = null;
+
+  async getPatternsBundle() {
+    if (this.cachedPatternsBundle) {
+      return this.cachedPatternsBundle;
+    }
+
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const crypto = await import('node:crypto');
+
+    const filePath = path.resolve(process.cwd(), 'src/modules/templates/assets/sms_patterns.json');
+    let patternsData: any = { patterns: [] };
+
+    if (fs.existsSync(filePath)) {
+      const raw = fs.readFileSync(filePath, 'utf-8');
+      patternsData = JSON.parse(raw);
+    }
+
+    const serialized = JSON.stringify(patternsData.patterns);
+    const hash = crypto.createHash('sha256').update(serialized).digest('hex');
+    const etag = `"${hash.slice(0, 16)}"`;
+
+    this.cachedPatternsBundle = {
+      etag,
+      payload: {
+        version: '2026.10.10',
+        hash,
+        patterns_count: patternsData.patterns.length,
+        patterns: patternsData.patterns,
+      },
+    };
+
+    return this.cachedPatternsBundle;
+  }
 }
 
 export const templateService = new TemplateService();
+

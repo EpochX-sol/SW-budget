@@ -11,7 +11,7 @@ export class SyncRepository {
   }
 
   async applyPushBatch(userId: string, changes: SyncChangeItem[]) {
-    return prisma.$transaction(async (tx: { $queryRawUnsafe: (arg0: string, arg1: string) => any; transaction: { updateMany: (arg0: { where: { id: string; userId: string; }; data: { deletedAt: Date; changeSeq: bigint; }; }) => any; upsert: (arg0: { where: { id: string; }; create: { id: string; userId: string; accountId: any; categoryId: any; type: any; amount: any; balanceAfter: any; counterparty: any; reference: any; note: any; occurredAt: Date; source: any; parseConfidence: any; templateId: any; balanceChainOk: any; gapBeforeAmount: any; isInternalTransfer: any; parentTxnId: any; dedupeKey: any; needsReview: any; userEditedFields: any; changeSeq: bigint; }; update: { accountId: any; categoryId: any; type: any; amount: any; balanceAfter: any; counterparty: any; reference: any; note: any; occurredAt: Date; parseConfidence: any; balanceChainOk: any; gapBeforeAmount: any; needsReview: any; userEditedFields: any; changeSeq: bigint; deletedAt: null; }; }) => any; }; account: { updateMany: (arg0: { where: { id: string; userId: string; }; data: { deletedAt: Date; changeSeq: bigint; }; }) => any; upsert: (arg0: { where: { id: string; }; create: { id: string; userId: string; provider: any; name: any; accountMask: any; lastKnownBalance: any; isSavings: any; changeSeq: bigint; }; update: { provider: any; name: any; accountMask: any; lastKnownBalance: any; isSavings: any; changeSeq: bigint; deletedAt: null; }; }) => any; }; category: { updateMany: (arg0: { where: { id: string; userId: string; isSystem: boolean; }; data: { deletedAt: Date; changeSeq: bigint; }; }) => any; upsert: (arg0: { where: { id: string; }; create: { id: string; userId: string; name: any; icon: any; colorHex: any; isSystem: boolean; changeSeq: bigint; }; update: { name: any; icon: any; colorHex: any; changeSeq: bigint; deletedAt: null; }; }) => any; }; limit: { updateMany: (arg0: { where: { id: string; userId: string; }; data: { deletedAt: Date; changeSeq: bigint; }; }) => any; upsert: (arg0: { where: { id: string; }; create: { id: string; userId: string; scopeType: any; scopeId: any; periodType: any; startDate: Date | null; endDate: Date | null; amount: any; mode: any; rollover: any; alertThresholds: any; active: any; changeSeq: bigint; }; update: { scopeType: any; scopeId: any; periodType: any; amount: any; mode: any; rollover: any; alertThresholds: any; active: any; changeSeq: bigint; deletedAt: null; }; }) => any; }; savingPlan: { updateMany: (arg0: { where: { id: string; userId: string; }; data: { deletedAt: Date; changeSeq: bigint; }; }) => any; upsert: (arg0: { where: { id: string; }; create: { id: string; userId: string; name: any; periodType: any; targetAmount: any; startDate: Date; endDate: Date | null; ruleType: any; ruleValue: any; linkedAccountId: any; priority: any; status: any; changeSeq: bigint; }; update: { name: any; targetAmount: any; ruleType: any; ruleValue: any; priority: any; status: any; changeSeq: bigint; deletedAt: null; }; }) => any; }; userSyncState: { update: (arg0: { where: { userId: string; }; data: { seq: bigint; }; }) => any; }; outboxEvent: { create: (arg0: { data: { userId: string; eventType: string; payload: { changeSeq: string; count: number; }; }; }) => any; }; }) => {
+    return prisma.$transaction(async (tx: any) => {
       // 1. Lock user_sync_state FOR UPDATE and increment sequence
       const lockedRows: any = await tx.$queryRawUnsafe(
         'SELECT seq FROM user_sync_state WHERE user_id = $1::uuid FOR UPDATE',
@@ -231,6 +231,214 @@ export class SyncRepository {
               },
             });
           }
+        } else if (entity === 'budget_plan') {
+          if (op === 'delete') {
+            await tx.budgetPlan.updateMany({
+              where: { id, userId },
+              data: { deletedAt: new Date(), changeSeq: itemSeq },
+            });
+          } else {
+            await tx.budgetPlan.upsert({
+              where: { id },
+              create: {
+                id,
+                userId,
+                name: data.name || 'My Spending Plan',
+                totalAmount: new Prisma.Decimal(data.total_amount || 0),
+                startDate: new Date(data.start_date || new Date()),
+                endDate: new Date(data.end_date || new Date()),
+                rolloverMode: data.rollover_mode || 'SPREAD_EVENLY',
+                reservePercent: new Prisma.Decimal(data.reserve_percent || 0),
+                savingGoal: new Prisma.Decimal(data.saving_goal || 0),
+                minDailyFloor: new Prisma.Decimal(data.min_daily_floor || 0),
+                dayWeights: data.day_weights || null,
+                active: data.active ?? true,
+                changeSeq: itemSeq,
+              },
+              update: {
+                name: data.name || 'My Spending Plan',
+                totalAmount: new Prisma.Decimal(data.total_amount || 0),
+                startDate: new Date(data.start_date || new Date()),
+                endDate: new Date(data.end_date || new Date()),
+                rolloverMode: data.rollover_mode || 'SPREAD_EVENLY',
+                reservePercent: new Prisma.Decimal(data.reserve_percent || 0),
+                savingGoal: new Prisma.Decimal(data.saving_goal || 0),
+                minDailyFloor: new Prisma.Decimal(data.min_daily_floor || 0),
+                dayWeights: data.day_weights || null,
+                active: data.active ?? true,
+                changeSeq: itemSeq,
+                deletedAt: null,
+              },
+            });
+          }
+        } else if (entity === 'fixed_expense') {
+          if (op === 'delete') {
+            await tx.fixedExpense.updateMany({
+              where: { id, plan: { userId } },
+              data: { deletedAt: new Date(), changeSeq: itemSeq },
+            });
+          } else {
+            await tx.fixedExpense.upsert({
+              where: { id },
+              create: {
+                id,
+                planId: data.plan_id,
+                title: data.title,
+                amount: new Prisma.Decimal(data.amount || 0),
+                dueDate: data.due_date ? new Date(data.due_date) : null,
+                paid: data.paid ?? false,
+                changeSeq: itemSeq,
+              },
+              update: {
+                title: data.title,
+                amount: new Prisma.Decimal(data.amount || 0),
+                dueDate: data.due_date ? new Date(data.due_date) : null,
+                paid: data.paid ?? false,
+                changeSeq: itemSeq,
+                deletedAt: null,
+              },
+            });
+          }
+        } else if (entity === 'category_limit') {
+          if (op === 'delete') {
+            await tx.categoryLimit.updateMany({
+              where: { id, plan: { userId } },
+              data: { deletedAt: new Date(), changeSeq: itemSeq },
+            });
+          } else {
+            await tx.categoryLimit.upsert({
+              where: { id },
+              create: {
+                id,
+                planId: data.plan_id,
+                category: data.category,
+                amount: new Prisma.Decimal(data.amount || 0),
+                changeSeq: itemSeq,
+              },
+              update: {
+                category: data.category,
+                amount: new Prisma.Decimal(data.amount || 0),
+                changeSeq: itemSeq,
+                deletedAt: null,
+              },
+            });
+          }
+        } else if (entity === 'reimbursement') {
+          if (op === 'delete') {
+            await tx.reimbursement.updateMany({
+              where: { id, userId },
+              data: { deletedAt: new Date(), changeSeq: itemSeq },
+            });
+          } else {
+            await tx.reimbursement.upsert({
+              where: { id },
+              create: {
+                id,
+                userId,
+                expenseTxnId: data.expense_txn_id,
+                creditTxnId: data.credit_txn_id,
+                amount: new Prisma.Decimal(data.amount || 0),
+                note: data.note || null,
+                changeSeq: itemSeq,
+              },
+              update: {
+                expenseTxnId: data.expense_txn_id,
+                creditTxnId: data.credit_txn_id,
+                amount: new Prisma.Decimal(data.amount || 0),
+                note: data.note || null,
+                changeSeq: itemSeq,
+                deletedAt: null,
+              },
+            });
+          }
+        } else if (entity === 'contact_person') {
+          if (op === 'delete') {
+            await tx.contactPerson.updateMany({
+              where: { id, userId },
+              data: { deletedAt: new Date(), changeSeq: itemSeq },
+            });
+          } else {
+            await tx.contactPerson.upsert({
+              where: { id },
+              create: {
+                id,
+                userId,
+                name: data.name,
+                phoneNumber: data.phone_number || null,
+                changeSeq: itemSeq,
+              },
+              update: {
+                name: data.name,
+                phoneNumber: data.phone_number || null,
+                changeSeq: itemSeq,
+                deletedAt: null,
+              },
+            });
+          }
+        } else if (entity === 'loan_debt') {
+          if (op === 'delete') {
+            await tx.loanDebt.updateMany({
+              where: { id, userId },
+              data: { deletedAt: new Date(), changeSeq: itemSeq },
+            });
+          } else {
+            await tx.loanDebt.upsert({
+              where: { id },
+              create: {
+                id,
+                userId,
+                personId: data.person_id,
+                type: data.type || 'borrowed',
+                initialAmount: new Prisma.Decimal(data.initial_amount || 0),
+                currentBalance: new Prisma.Decimal(data.current_balance || 0),
+                dueDate: data.due_date ? new Date(data.due_date) : null,
+                status: data.status || 'active',
+                note: data.note || null,
+                changeSeq: itemSeq,
+              },
+              update: {
+                personId: data.person_id,
+                type: data.type || 'borrowed',
+                initialAmount: new Prisma.Decimal(data.initial_amount || 0),
+                currentBalance: new Prisma.Decimal(data.current_balance || 0),
+                dueDate: data.due_date ? new Date(data.due_date) : null,
+                status: data.status || 'active',
+                note: data.note || null,
+                changeSeq: itemSeq,
+                deletedAt: null,
+              },
+            });
+          }
+        } else if (entity === 'loan_repayment') {
+          if (op === 'delete') {
+            await tx.loanRepayment.updateMany({
+              where: { id, userId },
+              data: { deletedAt: new Date(), changeSeq: itemSeq },
+            });
+          } else {
+            await tx.loanRepayment.upsert({
+              where: { id },
+              create: {
+                id,
+                userId,
+                loanDebtId: data.loan_debt_id,
+                txnId: data.txn_id || null,
+                amount: new Prisma.Decimal(data.amount || 0),
+                repaidAt: new Date(data.repaid_at || new Date()),
+                note: data.note || null,
+                changeSeq: itemSeq,
+              },
+              update: {
+                loanDebtId: data.loan_debt_id,
+                txnId: data.txn_id || null,
+                amount: new Prisma.Decimal(data.amount || 0),
+                repaidAt: new Date(data.repaid_at || new Date()),
+                note: data.note || null,
+                changeSeq: itemSeq,
+                deletedAt: null,
+              },
+            });
+          }
         }
 
         acceptedIds.push(id);
@@ -265,7 +473,20 @@ export class SyncRepository {
 
   async pullChanges(userId: string, cursor: bigint, limit: number) {
     // Query each syncable entity where changeSeq > cursor ordered by changeSeq ASC
-    const [txns, accounts, categories, limits, plans] = await Promise.all([
+    const [
+      txns,
+      accounts,
+      categories,
+      limits,
+      plans,
+      budgetPlans,
+      fixedExpenses,
+      categoryLimits,
+      reimbursements,
+      contactPersons,
+      loanDebts,
+      loanRepayments,
+    ] = await Promise.all([
       prisma.transaction.findMany({
         where: { userId, changeSeq: { gt: cursor } },
         orderBy: { changeSeq: 'asc' },
@@ -287,6 +508,41 @@ export class SyncRepository {
         take: limit,
       }),
       prisma.savingPlan.findMany({
+        where: { userId, changeSeq: { gt: cursor } },
+        orderBy: { changeSeq: 'asc' },
+        take: limit,
+      }),
+      prisma.budgetPlan.findMany({
+        where: { userId, changeSeq: { gt: cursor } },
+        orderBy: { changeSeq: 'asc' },
+        take: limit,
+      }),
+      prisma.fixedExpense.findMany({
+        where: { plan: { userId }, changeSeq: { gt: cursor } },
+        orderBy: { changeSeq: 'asc' },
+        take: limit,
+      }),
+      prisma.categoryLimit.findMany({
+        where: { plan: { userId }, changeSeq: { gt: cursor } },
+        orderBy: { changeSeq: 'asc' },
+        take: limit,
+      }),
+      prisma.reimbursement.findMany({
+        where: { userId, changeSeq: { gt: cursor } },
+        orderBy: { changeSeq: 'asc' },
+        take: limit,
+      }),
+      prisma.contactPerson.findMany({
+        where: { userId, changeSeq: { gt: cursor } },
+        orderBy: { changeSeq: 'asc' },
+        take: limit,
+      }),
+      prisma.loanDebt.findMany({
+        where: { userId, changeSeq: { gt: cursor } },
+        orderBy: { changeSeq: 'asc' },
+        take: limit,
+      }),
+      prisma.loanRepayment.findMany({
         where: { userId, changeSeq: { gt: cursor } },
         orderBy: { changeSeq: 'asc' },
         take: limit,
@@ -392,6 +648,119 @@ export class SyncRepository {
           target_amount: p.targetAmount.toString(),
           rule_type: p.ruleType,
           status: p.status,
+        },
+      });
+    }
+
+    for (const bp of budgetPlans) {
+      allChanges.push({
+        entity: 'budget_plan',
+        op: bp.deletedAt ? 'delete' : 'upsert',
+        id: bp.id,
+        change_seq: bp.changeSeq,
+        data: {
+          name: bp.name,
+          total_amount: bp.totalAmount.toString(),
+          start_date: bp.startDate.toISOString().slice(0, 10),
+          end_date: bp.endDate.toISOString().slice(0, 10),
+          rollover_mode: bp.rolloverMode,
+          reserve_percent: bp.reservePercent.toString(),
+          saving_goal: bp.savingGoal.toString(),
+          min_daily_floor: bp.minDailyFloor.toString(),
+          day_weights: bp.dayWeights,
+          active: bp.active,
+        },
+      });
+    }
+
+    for (const fe of fixedExpenses) {
+      allChanges.push({
+        entity: 'fixed_expense',
+        op: fe.deletedAt ? 'delete' : 'upsert',
+        id: fe.id,
+        change_seq: fe.changeSeq,
+        data: {
+          plan_id: fe.planId,
+          title: fe.title,
+          amount: fe.amount.toString(),
+          due_date: fe.dueDate ? fe.dueDate.toISOString().slice(0, 10) : null,
+          paid: fe.paid,
+        },
+      });
+    }
+
+    for (const cl of categoryLimits) {
+      allChanges.push({
+        entity: 'category_limit',
+        op: cl.deletedAt ? 'delete' : 'upsert',
+        id: cl.id,
+        change_seq: cl.changeSeq,
+        data: {
+          plan_id: cl.planId,
+          category: cl.category,
+          amount: cl.amount.toString(),
+        },
+      });
+    }
+
+    for (const r of reimbursements) {
+      allChanges.push({
+        entity: 'reimbursement',
+        op: r.deletedAt ? 'delete' : 'upsert',
+        id: r.id,
+        change_seq: r.changeSeq,
+        data: {
+          expense_txn_id: r.expenseTxnId,
+          credit_txn_id: r.creditTxnId,
+          amount: r.amount.toString(),
+          note: r.note,
+        },
+      });
+    }
+
+    for (const cp of contactPersons) {
+      allChanges.push({
+        entity: 'contact_person',
+        op: cp.deletedAt ? 'delete' : 'upsert',
+        id: cp.id,
+        change_seq: cp.changeSeq,
+        data: {
+          name: cp.name,
+          phone_number: cp.phoneNumber,
+        },
+      });
+    }
+
+    for (const ld of loanDebts) {
+      allChanges.push({
+        entity: 'loan_debt',
+        op: ld.deletedAt ? 'delete' : 'upsert',
+        id: ld.id,
+        change_seq: ld.changeSeq,
+        data: {
+          person_id: ld.personId,
+          type: ld.type,
+          initial_amount: ld.initialAmount.toString(),
+          current_balance: ld.currentBalance.toString(),
+          due_date: ld.dueDate ? ld.dueDate.toISOString().slice(0, 10) : null,
+          status: ld.status,
+          note: ld.note,
+        },
+      });
+    }
+
+    for (const lr of loanRepayments) {
+      allChanges.push({
+        entity: 'loan_repayment',
+        op: lr.deletedAt ? 'delete' : 'upsert',
+        id: lr.id,
+        change_seq: lr.changeSeq,
+        data: {
+          loan_debt_id: lr.loanDebtId,
+          txn_id: lr.txnId,
+          amount: lr.amount.toString(),
+          repaid_at: lr.repaidAt.toISOString(),
+          note: lr.note,
         },
       });
     }

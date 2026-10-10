@@ -79,6 +79,42 @@ export class SchedulerWorker {
       tasks: processed,
     };
   }
+
+  /**
+   * Executes Addis Ababa Midnight Tick (00:00 EAT / 21:00 UTC).
+   * Advances Day d and recalculates snapshots for all active plans.
+   */
+  async runAddisMidnightTick() {
+    const activePlans = await prisma.budgetPlan.findMany({
+      where: { active: true, deletedAt: null },
+    });
+
+    const { spendingPlanService } = await import('../../modules/finance/spending-plan/spending-plan.service.js');
+    const { planNotificationsQueue } = await import('../queues.js');
+
+    const results = [];
+    for (const plan of activePlans) {
+      try {
+        const snap = await spendingPlanService.recomputeSnapshot(plan.id, plan.userId);
+        // Enqueue morning allowance notification
+        await planNotificationsQueue.add('dispatch_notification', {
+          userId: plan.userId,
+          planId: plan.id,
+          type: 'morning_allowance',
+          allowance: snap.today.allowance,
+        });
+        results.push({ planId: plan.id, status: 'ok', dayIndex: snap.days.elapsed });
+      } catch (err: any) {
+        results.push({ planId: plan.id, status: 'error', error: err.message });
+      }
+    }
+
+    return {
+      plans_ticked: activePlans.length,
+      results,
+    };
+  }
 }
 
 export const schedulerWorker = new SchedulerWorker();
+

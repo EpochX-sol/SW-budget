@@ -26,3 +26,30 @@ export const aggregatesQueue = new Queue('aggregates', {
     removeOnFail: 2000,
   },
 });
+
+export const planSnapshotsQueue = new Queue('plan-snapshots', {
+  connection: redisConnection,
+  defaultJobOptions: {
+    attempts: 3,
+    backoff: {
+      type: 'exponential',
+      delay: 1000,
+    },
+    removeOnComplete: 500,
+    removeOnFail: 2000,
+  },
+});
+
+export const planNotificationsQueue = new Queue('plan-notifications', {
+  connection: redisConnection,
+  defaultJobOptions: {
+    attempts: 3,
+    backoff: {
+      type: 'exponential',
+      delay: 1000,
+    },
+    removeOnComplete: 500,
+    removeOnFail: 2000,
+  },
+});
+

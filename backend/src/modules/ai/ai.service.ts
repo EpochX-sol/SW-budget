@@ -268,6 +268,18 @@ All currencies are ETB (Ethiopian Birr). Be encouraging, concise, and realistic.
     if (toolName === 'get_budget_status') {
       return financeTools.getBudgetStatus(userId);
     }
+    if (toolName === 'get_active_plan_snapshot') {
+      return financeTools.getActivePlanSnapshot(userId);
+    }
+    if (toolName === 'simulate_plan_spending') {
+      return financeTools.simulatePlanSpending(userId, args);
+    }
+    if (toolName === 'query_loans_debts') {
+      return financeTools.queryLoansDebts(userId, args);
+    }
+    if (toolName === 'query_reimbursements') {
+      return financeTools.queryReimbursements(userId, args);
+    }
     throw new Error(`Unknown tool: ${toolName}`);
   }
 
@@ -287,7 +299,32 @@ All currencies are ETB (Ethiopian Birr). Be encouraging, concise, and realistic.
     const amountMatch = userContent.match(/(\d+[\d,]*(\.\d+)?)/);
     const amount = amountMatch ? parseFloat(amountMatch[1].replace(/,/g, '')) : null;
 
-    if (amount !== null && (lower.includes('afford') || lower.includes('spend') || lower.includes('buy'))) {
+    if (lower.includes('plan') || lower.includes('allowance') || lower.includes('tomorrow')) {
+      sendSse('tool_start', { tool: 'get_active_plan_snapshot', arguments: {} });
+      const snap = await financeTools.getActivePlanSnapshot(userId);
+      sendSse('tool_end', { tool: 'get_active_plan_snapshot', result: snap });
+      toolCalls.push({ tool: 'get_active_plan_snapshot', args: {}, result: snap });
+
+      if (!snap.has_active_plan) {
+        text = 'You do not have an active spending plan configured yet. Create one to get daily allowances!';
+      } else {
+        text = `Your active plan is "${snap.plan_name}". Today's allowance is ${snap.allowance_today} ETB (${snap.spent_today} ETB spent). Tomorrow's allowance is adjusted to ${snap.tomorrow_allowance} ETB. Pacing status is ${snap.status} with a ${snap.streak}-day streak!`;
+      }
+    } else if (lower.includes('owe') || lower.includes('lent') || lower.includes('borrow') || lower.includes('debt')) {
+      sendSse('tool_start', { tool: 'query_loans_debts', arguments: {} });
+      const debts = await financeTools.queryLoansDebts(userId, {});
+      sendSse('tool_end', { tool: 'query_loans_debts', result: debts });
+      toolCalls.push({ tool: 'query_loans_debts', args: {}, result: debts });
+
+      text = `You have lent a total of ${debts.total_lent} ETB and borrowed ${debts.total_borrowed} ETB across ${debts.debts.length} active records.`;
+    } else if (lower.includes('reimburs')) {
+      sendSse('tool_start', { tool: 'query_reimbursements', arguments: {} });
+      const reimbs = await financeTools.queryReimbursements(userId, {});
+      sendSse('tool_end', { tool: 'query_reimbursements', result: reimbs });
+      toolCalls.push({ tool: 'query_reimbursements', args: {}, result: reimbs });
+
+      text = `You have ${reimbs.total_reimbursements_count} linked reimbursement records.`;
+    } else if (amount !== null && (lower.includes('afford') || lower.includes('spend') || lower.includes('buy'))) {
       sendSse('tool_start', { tool: 'simulate_scenario', arguments: { amount } });
       const result = await financeTools.simulateScenario(userId, { amount });
       sendSse('tool_end', { tool: 'simulate_scenario', result });

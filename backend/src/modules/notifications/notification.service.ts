@@ -15,7 +15,18 @@ if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
 
 export interface DispatchNotificationInput {
   userId: string;
-  type: 'limit_alert' | 'morning_allowance' | 'evening_summary' | 'bill_warning' | 'security_alert';
+  type:
+    | 'limit_alert'
+    | 'morning_allowance'
+    | 'evening_summary'
+    | 'bill_warning'
+    | 'security_alert'
+    | 'threshold_80'
+    | 'allowance_exceeded'
+    | 'burn_rate'
+    | 'weekly_report'
+    | 'plan_ending_soon'
+    | 'plan_finished';
   channel: 'push' | 'in_app';
   priority?: 'normal' | 'high' | 'urgent';
   title: string;

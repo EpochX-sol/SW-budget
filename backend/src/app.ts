@@ -14,6 +14,9 @@ import { notificationRoutes } from './modules/notifications/notification.routes.
 import { analyticsRoutes } from './modules/analytics/analytics.routes.js';
 import { exportRoutes } from './modules/export/export.routes.js';
 import { metricsRoutes } from './modules/metrics/metrics.routes.js';
+import { spendingPlanRoutes } from './modules/finance/spending-plan/spending-plan.routes.js';
+import { reimbursementRoutes } from './modules/finance/reimbursements/reimbursement.routes.js';
+import { debtsRoutes } from './modules/finance/debts/debts.routes.js';
 
 // Polyfill BigInt JSON serialization for Fastify / Pino
 (BigInt.prototype as any).toJSON = function () {
@@ -80,6 +83,9 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(analyticsRoutes);
   await app.register(exportRoutes);
   await app.register(metricsRoutes);
+  await app.register(spendingPlanRoutes);
+  await app.register(reimbursementRoutes);
+  await app.register(debtsRoutes);
 
   return app;
 }

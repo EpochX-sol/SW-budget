@@ -1,7 +1,20 @@
 import { z } from 'zod';
 
 export const syncChangeItemSchema = z.object({
-  entity: z.enum(['account', 'category', 'transaction', 'limit', 'saving_plan']),
+  entity: z.enum([
+    'account',
+    'category',
+    'transaction',
+    'limit',
+    'saving_plan',
+    'budget_plan',
+    'fixed_expense',
+    'category_limit',
+    'reimbursement',
+    'contact_person',
+    'loan_debt',
+    'loan_repayment',
+  ]),
   op: z.enum(['upsert', 'delete']),
   id: z.string().uuid(),
   client_updated_at: z.string(),
