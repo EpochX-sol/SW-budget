@@ -724,7 +724,7 @@ class HomeScreen extends ConsumerWidget {
 
   Widget _buildCoachInsightCard({
     required BuildContext context,
-    required SafeToSpendResult safeToSpend,
+    required SafeToSpendSummary safeToSpend,
     required double safeToday,
     required bool isPrivate,
   }) {
