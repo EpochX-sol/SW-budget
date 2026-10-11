@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../core/security/auth_state.dart';
 import '../../core/security/privacy_provider.dart';
 import '../../core/theme/app_colors.dart';
+import '../../core/backup/backup_export_service.dart';
 import '../../core/widgets/sheets/export_statement_sheet.dart';
 import '../../data/sync/sync_provider.dart';
 
@@ -167,7 +168,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       ),
                       icon: const Icon(Icons.file_download_outlined, size: 16),
                       label: const Text('Export Tax Statement', style: TextStyle(fontWeight: FontWeight.w700)),
-                      onPressed: () => ExportStatementSheet.show(context),
+                      onPressed: () => ExportStatementSheet.show(
+                        context,
+                        onGenerate: (period, format) async {
+                          final exportService = await ref.read(backupExportServiceProvider.future);
+                          await exportService.exportTransactionsCsv(period: period, format: format);
+                        },
+                      ),
                     ),
                   ),
                 ],

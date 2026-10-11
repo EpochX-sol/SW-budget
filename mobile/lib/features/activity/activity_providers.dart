@@ -39,3 +39,70 @@ final accountsStreamProvider = StreamProvider<List<Map<String, dynamic>>>((ref) 
     }
   }
 });
+
+class TransactionController {
+  final Ref _ref;
+
+  TransactionController(this._ref);
+
+  Future<void> addTransaction({
+    required bool isExpense,
+    required double amount,
+    required String counterparty,
+    required String accountId,
+    required String category,
+    required String note,
+  }) async {
+    final db = await _ref.read(databaseProvider.future);
+    final now = DateTime.now();
+    final id = 'manual_${now.millisecondsSinceEpoch}';
+
+    // Update account balance if known
+    final acc = db.getAccountById(accountId);
+    double? balanceAfter;
+    if (acc != null && acc['last_known_balance'] != null) {
+      final currentBal = (acc['last_known_balance'] as num).toDouble();
+      balanceAfter = isExpense ? currentBal - amount : currentBal + amount;
+      db.updateAccountBalance(accountId, balanceAfter);
+    }
+
+    db.upsertTransaction(
+      id: id,
+      accountId: accountId,
+      categoryId: category,
+      type: isExpense ? 'expense' : 'income',
+      amount: amount,
+      balanceAfter: balanceAfter,
+      counterparty: counterparty,
+      note: note.isNotEmpty ? note : null,
+      occurredAt: now,
+      source: 'manual',
+      parseConfidence: 1.0,
+      balanceChainOk: true,
+      needsReview: false,
+    );
+  }
+
+  Future<void> updateDetails({
+    required String id,
+    required String category,
+    required String note,
+  }) async {
+    final db = await _ref.read(databaseProvider.future);
+    db.updateTransactionCategoryAndNote(id: id, categoryId: category, note: note);
+  }
+
+  Future<void> markTransfer(String id) async {
+    final db = await _ref.read(databaseProvider.future);
+    db.markTransactionAsTransfer(id);
+  }
+
+  Future<void> delete(String id) async {
+    final db = await _ref.read(databaseProvider.future);
+    db.deleteTransaction(id);
+  }
+}
+
+final transactionControllerProvider = Provider<TransactionController>((ref) {
+  return TransactionController(ref);
+});

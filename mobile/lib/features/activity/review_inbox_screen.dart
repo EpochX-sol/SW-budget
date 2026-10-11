@@ -132,12 +132,35 @@ class _ReviewInboxScreenState extends ConsumerState<ReviewInboxScreen> {
                   const SizedBox(height: 16),
 
                   if (!hasRealItems) ...[
-                    // Prototype mock triage cards if empty
-                    _buildMockTransferCard(context, isPrivate),
-                    const SizedBox(height: 12),
-                    _buildMockGapCard(context, isPrivate),
-                    const SizedBox(height: 12),
-                    _buildMockSenderCard(context),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 20),
+                      decoration: BoxDecoration(
+                        color: AppColors.surface,
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: AppColors.line),
+                      ),
+                      child: const Column(
+                        children: [
+                          Icon(Icons.check_circle_outline_rounded, color: AppColors.income, size: 42),
+                          SizedBox(height: 12),
+                          Text(
+                            'Inbox Zero — All Verified',
+                            style: TextStyle(
+                              color: AppColors.text,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          SizedBox(height: 6),
+                          Text(
+                            'All bank SMS notifications and transactions have been parsed, categorized, and reconciled. No actions required.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(color: AppColors.text3, fontSize: 12, height: 1.4),
+                          ),
+                        ],
+                      ),
+                    ),
                   ] else ...[
                     // Real items from local database
                     ..._reviewTransactions.map((tx) => _buildRealTxnCard(tx, isPrivate)),
@@ -150,255 +173,9 @@ class _ReviewInboxScreenState extends ConsumerState<ReviewInboxScreen> {
     );
   }
 
-  Widget _buildMockTransferCard(BuildContext context, bool isPrivate) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.line),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-                decoration: BoxDecoration(
-                  color: AppColors.accentBg,
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: const Text(
-                  'UNCLEAR TRANSFER',
-                  style: TextStyle(
-                    color: AppColors.accent,
-                    fontSize: 9,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ),
-              const Text(
-                '68% confidence',
-                style: TextStyle(color: AppColors.amber, fontSize: 11, fontWeight: FontWeight.w600),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text(
-                'Kenenisa Tadesse',
-                style: TextStyle(color: AppColors.text, fontSize: 14, fontWeight: FontWeight.w700),
-              ),
-              Text(
-                formatCurrency(1200.0, isPrivate: isPrivate),
-                style: const TextStyle(
-                  color: AppColors.expense,
-                  fontSize: 15,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 4),
-          const Text(
-            'Telebirr transfer · Is this an expense or an own transfer to another account?',
-            style: TextStyle(color: AppColors.text3, fontSize: 11),
-          ),
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              _buildActionButton(
-                label: 'Expense',
-                color: AppColors.expense,
-                onTap: () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Marked as Personal Expense')),
-                  );
-                },
-              ),
-              _buildActionButton(
-                label: 'Own Transfer',
-                color: AppColors.accent,
-                onTap: () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Marked as Internal Transfer')),
-                  );
-                },
-              ),
-              _buildActionButton(
-                label: 'Dismiss',
-                color: AppColors.text3,
-                onTap: () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Item dismissed')),
-                  );
-                },
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
 
-  Widget _buildMockGapCard(BuildContext context, bool isPrivate) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.amber.withOpacity(0.3)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-                decoration: BoxDecoration(
-                  color: AppColors.amberBg,
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: const Text(
-                  'BALANCE GAP',
-                  style: TextStyle(
-                    color: AppColors.amber,
-                    fontSize: 9,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ),
-              const Text(
-                'Yesterday',
-                style: TextStyle(color: AppColors.text3, fontSize: 11),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text(
-                'CBE Balance Drop',
-                style: TextStyle(color: AppColors.text, fontSize: 14, fontWeight: FontWeight.w700),
-              ),
-              Text(
-                formatCurrency(850.0, isPrivate: isPrivate),
-                style: const TextStyle(
-                  color: AppColors.amber,
-                  fontSize: 15,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 4),
-          const Text(
-            'Your CBE balance dropped from ETB 19,300 to ETB 18,450 without an SMS notification.',
-            style: TextStyle(color: AppColors.text3, fontSize: 11),
-          ),
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              _buildActionButton(
-                label: 'Log as Expense',
-                color: AppColors.income,
-                onTap: () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Logged unaccounted drop as expense')),
-                  );
-                },
-              ),
-              _buildActionButton(
-                label: 'Ignore Gap',
-                color: AppColors.text3,
-                onTap: () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Gap ignored and balance calibrated')),
-                  );
-                },
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
 
-  Widget _buildMockSenderCard(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.line),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-            decoration: BoxDecoration(
-              color: AppColors.surface2,
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: const Text(
-              'NEW SENDER FOUND',
-              style: TextStyle(
-                color: AppColors.text2,
-                fontSize: 9,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-          ),
-          const SizedBox(height: 10),
-          const Text(
-            'Sender "AwashBank"',
-            style: TextStyle(color: AppColors.text, fontSize: 14, fontWeight: FontWeight.w700),
-          ),
-          const SizedBox(height: 4),
-          const Text(
-            'Received transaction SMS from sender AwashBank. Link this sender to an account?',
-            style: TextStyle(color: AppColors.text3, fontSize: 11),
-          ),
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 8,
-            children: [
-              _buildActionButton(
-                label: 'Add Institution',
-                color: AppColors.accent,
-                onTap: () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Added AwashBank to parser rules')),
-                  );
-                },
-              ),
-              _buildActionButton(
-                label: 'Ignore Sender',
-                color: AppColors.text3,
-                onTap: () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Ignored sender')),
-                  );
-                },
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
+
 
   Widget _buildRealTxnCard(Map<String, dynamic> tx, bool isPrivate) {
     final id = tx['id'] as String;

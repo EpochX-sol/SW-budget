@@ -24,8 +24,27 @@ class BackupExportService {
         _apiClient = apiClient;
 
   /// Generates a local CSV/Excel export of transactions and triggers system share sheet
-  Future<String> exportTransactionsCsv() async {
-    final txns = _database.getTransactions(limit: 5000);
+  Future<String> exportTransactionsCsv({String period = 'cycle', String format = 'csv'}) async {
+    final now = DateTime.now();
+    DateTime? cutoff;
+    if (period == 'cycle') {
+      cutoff = DateTime(now.year, now.month, 1);
+    } else if (period == '30') {
+      cutoff = now.subtract(const Duration(days: 30));
+    } else if (period == '90') {
+      cutoff = now.subtract(const Duration(days: 90));
+    } else if (period == 'ytd') {
+      cutoff = DateTime(now.year, 1, 1);
+    }
+
+    final allTxns = _database.getTransactions(limit: 5000);
+    final txns = cutoff != null
+        ? allTxns.where((t) {
+            final dt = DateTime.tryParse(t['occurred_at'] as String? ?? '');
+            return dt != null && dt.isAfter(cutoff!);
+          }).toList()
+        : allTxns;
+
     final buffer = StringBuffer();
 
     // CSV Header
@@ -46,8 +65,7 @@ class BackupExportService {
     }
 
     final tempDir = await getTemporaryDirectory();
-    final now = DateTime.now();
-    final fileName = 'sw_budget_transactions_${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}.csv';
+    final fileName = 'sw_budget_statement_${period}_${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}.csv';
     final file = File(p.join(tempDir.path, fileName));
 
     await file.writeAsString(buffer.toString());
@@ -55,7 +73,7 @@ class BackupExportService {
     // Share via system sheet
     await Share.shareXFiles(
       [XFile(file.path)],
-      subject: 'SW-budget Financial Ledger Export',
+      subject: 'SW-budget Financial Ledger Statement ($period)',
     );
 
     return file.path;

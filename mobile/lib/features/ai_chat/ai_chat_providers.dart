@@ -243,28 +243,20 @@ final aiChatProvider = StateNotifierProvider<AiChatNotifier, ChatState>((ref) {
 
 final aiMemoriesProvider = FutureProvider<List<AiMemoryItem>>((ref) async {
   final client = ref.watch(apiClientProvider);
-  // Endpoint from API doc
   try {
-    final res = await client.getMe(); // Profile check
-    // Direct call through dio or mock if endpoint returns list
-    return [
-      AiMemoryItem(
-        id: 'mem_1',
-        kind: 'preference',
-        content: 'Prefers saving at least 15% of income before allocating discretionary dining funds.',
-        importance: 5,
-        pinned: true,
-        createdAt: DateTime.now().subtract(const Duration(days: 2)),
-      ),
-      AiMemoryItem(
-        id: 'mem_2',
-        kind: 'goal',
-        content: 'Planning to save 50,000 ETB for wedding expenses by December 2026.',
-        importance: 4,
-        pinned: false,
-        createdAt: DateTime.now().subtract(const Duration(days: 5)),
-      ),
-    ];
+    final res = await client.getMe();
+    final rawMemories = (res['memories'] as List<dynamic>?) ?? [];
+    return rawMemories.map((m) {
+      final map = m as Map<String, dynamic>;
+      return AiMemoryItem(
+        id: (map['id'] ?? '') as String,
+        kind: (map['kind'] ?? 'preference') as String,
+        content: (map['content'] ?? '') as String,
+        importance: (map['importance'] as num?)?.toInt() ?? 3,
+        pinned: map['pinned'] == true || map['pinned'] == 1,
+        createdAt: DateTime.tryParse(map['created_at'] as String? ?? '') ?? DateTime.now(),
+      );
+    }).toList();
   } catch (_) {
     return [];
   }

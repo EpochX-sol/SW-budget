@@ -129,7 +129,30 @@ class _ActivityScreenState extends ConsumerState<ActivityScreen> {
         foregroundColor: const Color(0xFF080C14),
         shape: const CircleBorder(),
         child: const Icon(Icons.add, size: 28),
-        onPressed: () => AddTransactionSheet.show(context),
+        onPressed: () {
+          final accounts = ref.read(accountsStreamProvider).value ?? [];
+          AddTransactionSheet.show(
+            context,
+            accounts: accounts,
+            onSubmit: ({
+              required bool isExpense,
+              required double amount,
+              required String counterparty,
+              required String accountId,
+              required String category,
+              required String note,
+            }) {
+              ref.read(transactionControllerProvider).addTransaction(
+                    isExpense: isExpense,
+                    amount: amount,
+                    counterparty: counterparty,
+                    accountId: accountId,
+                    category: category,
+                    note: note,
+                  );
+            },
+          );
+        },
       ),
       body: SafeArea(
         child: Column(
@@ -567,7 +590,30 @@ class _ActivityScreenState extends ConsumerState<ActivityScreen> {
                                       ),
                                     ),
                                     onTap: () {
-                                      TransactionDetailSheet.show(context, transaction: tx);
+                                      final txId = (tx['id'] as String?) ?? '';
+                                       TransactionDetailSheet.show(
+                                         context,
+                                         transaction: tx,
+                                         onSave: (newCat, newNote) {
+                                           if (txId.isNotEmpty) {
+                                             ref.read(transactionControllerProvider).updateDetails(
+                                                   id: txId,
+                                                   category: newCat,
+                                                   note: newNote,
+                                                 );
+                                           }
+                                         },
+                                         onMarkTransfer: () {
+                                           if (txId.isNotEmpty) {
+                                             ref.read(transactionControllerProvider).markTransfer(txId);
+                                           }
+                                         },
+                                         onDelete: () {
+                                           if (txId.isNotEmpty) {
+                                             ref.read(transactionControllerProvider).delete(txId);
+                                           }
+                                         },
+                                       );
                                     },
                                   );
                                 },

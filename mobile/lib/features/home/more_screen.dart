@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/backup/backup_export_service.dart';
 import '../../core/security/auth_state.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/widgets/sheets/export_statement_sheet.dart';
@@ -162,7 +163,13 @@ class MoreScreen extends ConsumerWidget {
                     iconColor: AppColors.text2,
                     title: 'Export Statement',
                     subtitle: 'Generate PDF or CSV tax reports directly on device',
-                    onTap: () => ExportStatementSheet.show(context),
+                    onTap: () => ExportStatementSheet.show(
+                      context,
+                      onGenerate: (period, format) async {
+                        final exportService = await ref.read(backupExportServiceProvider.future);
+                        await exportService.exportTransactionsCsv(period: period, format: format);
+                      },
+                    ),
                   ),
                   const Divider(color: AppColors.line, height: 1),
                   _buildMenuItem(

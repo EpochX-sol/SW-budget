@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../core/security/privacy_provider.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/widgets/sheets/debt_edit_sheet.dart';
+import 'debts_providers.dart';
 
 class DebtsScreen extends ConsumerStatefulWidget {
   const DebtsScreen({super.key});
@@ -16,66 +17,48 @@ class DebtsScreen extends ConsumerStatefulWidget {
 class _DebtsScreenState extends ConsumerState<DebtsScreen> {
   int _selectedTab = 0; // 0: Owed to me, 1: I owe, 2: Reimburse
 
-  final List<Map<String, dynamic>> _mockOwedToMe = [
-    {
-      'id': 'd1',
-      'name': 'Dawit Alemayehu',
-      'amount': 3500.0,
-      'paid': 1500.0,
-      'due': 'Due in 5 days',
-      'note': 'Shared weekend trip fuel',
-    },
-    {
-      'id': 'd2',
-      'name': 'Helen Gebre',
-      'amount': 1200.0,
-      'paid': 0.0,
-      'due': 'Due next week',
-      'note': 'Concert ticket purchase',
-    },
-  ];
-
-  final List<Map<String, dynamic>> _mockIOwe = [
-    {
-      'id': 'd3',
-      'name': 'Abebe Bikila',
-      'amount': 1200.0,
-      'paid': 400.0,
-      'due': 'Due in 12 days',
-      'note': 'Split office lunch group bill',
-    },
-  ];
-
-  final List<Map<String, dynamic>> _mockReimb = [
-    {
-      'id': 'd4',
-      'name': 'Company Travel Claim',
-      'amount': 4850.0,
-      'paid': 0.0,
-      'due': 'Receipt submitted · Pending finance',
-      'note': 'Airport taxi + client lunch',
-    },
-  ];
-
   @override
   Widget build(BuildContext context) {
     final isPrivate = ref.watch(privacyModeProvider);
+    final debtsAsync = ref.watch(debtsStreamProvider);
+    final reimbAsync = ref.watch(reimbursementsStreamProvider);
+
+    final allDebts = debtsAsync.value ?? [];
+    final allReimbursements = reimbAsync.value ?? [];
+
+    final liveOwedToMe = allDebts
+        .where((d) => d['direction'] == 'owed_to_me' && d['status'] == 'active')
+        .toList();
+    final liveIOwe = allDebts
+        .where((d) => d['direction'] == 'i_owe' && d['status'] == 'active')
+        .toList();
+    final liveReimb = allReimbursements
+        .where((r) => r['status'] == 'pending')
+        .toList();
+
+    final effectiveOwedToMe = liveOwedToMe;
+    final effectiveIOwe = liveIOwe;
+    final effectiveReimb = liveReimb;
 
     // Compute totals
     double totalOwedToMe = 0.0;
-    for (final d in _mockOwedToMe) {
-      totalOwedToMe += (d['amount'] as double) - (d['paid'] as double);
+    for (final d in effectiveOwedToMe) {
+      final total = ((d['total_amount'] ?? d['amount']) as num?)?.toDouble() ?? 0.0;
+      final paid = ((d['paid_amount'] ?? d['paid']) as num?)?.toDouble() ?? 0.0;
+      totalOwedToMe += (total - paid);
     }
     double totalIOwe = 0.0;
-    for (final d in _mockIOwe) {
-      totalIOwe += (d['amount'] as double) - (d['paid'] as double);
+    for (final d in effectiveIOwe) {
+      final total = ((d['total_amount'] ?? d['amount']) as num?)?.toDouble() ?? 0.0;
+      final paid = ((d['paid_amount'] ?? d['paid']) as num?)?.toDouble() ?? 0.0;
+      totalIOwe += (total - paid);
     }
 
     final currentList = _selectedTab == 0
-        ? _mockOwedToMe
+        ? effectiveOwedToMe
         : _selectedTab == 1
-            ? _mockIOwe
-            : _mockReimb;
+            ? effectiveIOwe
+            : effectiveReimb;
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -100,7 +83,33 @@ class _DebtsScreenState extends ConsumerState<DebtsScreen> {
         foregroundColor: const Color(0xFF080C14),
         shape: const CircleBorder(),
         child: const Icon(Icons.add, size: 28),
-        onPressed: () => DebtEditSheet.show(context),
+        onPressed: () => DebtEditSheet.show(
+          context,
+          initialIsOwed: _selectedTab == 0,
+          onSave: ({
+            required bool isOwed,
+            required String who,
+            required double amount,
+            required String? dueDate,
+            required String note,
+          }) {
+            if (_selectedTab == 2) {
+              ref.read(debtsControllerProvider).addReimbursement(
+                    title: who,
+                    amount: amount,
+                    note: note,
+                  );
+            } else {
+              ref.read(debtsControllerProvider).addDebt(
+                    isOwed: isOwed,
+                    who: who,
+                    amount: amount,
+                    dueDate: dueDate,
+                    note: note,
+                  );
+            }
+          },
+        ),
       ),
       body: SafeArea(
         child: ListView(
@@ -197,16 +206,37 @@ class _DebtsScreenState extends ConsumerState<DebtsScreen> {
             // List of items
             if (currentList.isEmpty)
               Container(
-                padding: const EdgeInsets.symmetric(vertical: 36),
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(vertical: 36, horizontal: 16),
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
                   color: AppColors.surface,
                   borderRadius: BorderRadius.circular(16),
                   border: Border.all(color: AppColors.line),
                 ),
-                child: const Text(
-                  'No active records in this tab',
-                  style: TextStyle(color: AppColors.text3, fontSize: 13),
+                child: Column(
+                  children: [
+                    const Icon(Icons.handshake_outlined, color: AppColors.text3, size: 36),
+                    const SizedBox(height: 10),
+                    Text(
+                      _selectedTab == 0
+                          ? 'No money owed to you'
+                          : _selectedTab == 1
+                              ? 'You have no outstanding debts'
+                              : 'No pending reimbursement claims',
+                      style: const TextStyle(
+                        color: AppColors.text,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    const Text(
+                      'Tap + Record below to add a loan, debt, or expense claim',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: AppColors.text3, fontSize: 11),
+                    ),
+                  ],
                 ),
               )
             else
@@ -217,12 +247,12 @@ class _DebtsScreenState extends ConsumerState<DebtsScreen> {
                 separatorBuilder: (_, __) => const SizedBox(height: 10),
                 itemBuilder: (context, index) {
                   final item = currentList[index];
-                  final name = item['name'] as String;
-                  final total = item['amount'] as double;
-                  final paid = item['paid'] as double;
+                  final name = (item['counterparty'] ?? item['title'] ?? item['name'] ?? 'Record') as String;
+                  final total = ((item['total_amount'] ?? item['amount']) as num?)?.toDouble() ?? 0.0;
+                  final paid = ((item['paid_amount'] ?? item['paid']) as num?)?.toDouble() ?? 0.0;
                   final remaining = total - paid;
-                  final due = item['due'] as String;
-                  final note = item['note'] as String;
+                  final due = (item['due_date'] ?? item['due'] ?? '') as String;
+                  final note = (item['note'] ?? '') as String;
                   final ratio = total > 0 ? (paid / total).clamp(0.0, 1.0) : 0.0;
 
                   return Container(
@@ -309,6 +339,12 @@ class _DebtsScreenState extends ConsumerState<DebtsScreen> {
                             ),
                             GestureDetector(
                               onTap: () {
+                                final itemId = item['id'] as String? ?? '';
+                                if (_selectedTab == 2) {
+                                  ref.read(debtsControllerProvider).settleReimbursement(itemId);
+                                } else {
+                                  ref.read(debtsControllerProvider).settleDebt(itemId);
+                                }
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   SnackBar(
                                     content: Text('Settled payment for $name'),

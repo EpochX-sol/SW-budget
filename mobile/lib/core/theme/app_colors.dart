@@ -17,6 +17,7 @@ abstract class AppColors {
   static const Color bg = Color(0xFF080C14); // --bg:#080C14
   static const Color background = Color(0xFF080C14);
   static const Color surface = Color(0xFF101725); // --surface:#101725
+  static const Color surfaceLow = Color(0xFF101725);
   static const Color surface2 = Color(0xFF172033); // --surface2:#172033 (inputs, chips, segments)
   static const Color surface3 = Color(0xFF222D45); // --surface3:#222D45 (elevated borders, tracks)
   static const Color surfaceElevated = Color(0xFF172033);

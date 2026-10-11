@@ -23,9 +23,13 @@ class PlanScreen extends ConsumerWidget {
     final goalsAsync = ref.watch(savingPlansStreamProvider);
     final safeToSpend = ref.watch(safeToSpendProvider);
     final isPrivate = ref.watch(privacyModeProvider);
+    final dailySpendsAsync = ref.watch(currentMonthDailySpendProvider);
+    final cycleWeeksAsync = ref.watch(cycleWeeksSpendProvider);
 
     final rawLimits = limitsAsync.value ?? [];
     final rawGoals = goalsAsync.value ?? [];
+    final dailySpends = dailySpendsAsync.value ?? const [];
+    final cycleWeeks = cycleWeeksAsync.value ?? const [];
 
     final now = DateTime.now();
     final currentMonthName = DateFormat('MMMM \'yy').format(now);
@@ -99,7 +103,29 @@ class PlanScreen extends ConsumerWidget {
                     ],
                   ),
                   GestureDetector(
-                    onTap: () => PlanEditSheet.show(context),
+                    onTap: () => PlanEditSheet.show(
+                      context,
+                      currentPlan: {
+                        'name': '$currentMonthName Plan',
+                        'budget': totalBudget,
+                        'reserve_pct': 10.0,
+                        'rollover': 'SPREAD_EVENLY',
+                      },
+                      onSave: ({
+                        required String name,
+                        required String startDate,
+                        required String endDate,
+                        required double budget,
+                        required double reservePct,
+                        required String rollover,
+                      }) {
+                        ref.read(planControllerProvider).saveOverallBudget(
+                              budget: budget,
+                              reservePct: reservePct,
+                              rollover: rollover,
+                            );
+                      },
+                    ),
                     child: Container(
                       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                       decoration: BoxDecoration(
@@ -178,15 +204,24 @@ class PlanScreen extends ConsumerWidget {
               const SizedBox(height: 18),
 
               // 5. Pace Chart
-              _buildPaceChartSection(),
+              _buildPaceChartSection(
+                totalDays: totalDays,
+                currentDay: now.day,
+                budget: totalBudget,
+                spentByDay: dailySpends,
+                isPrivate: isPrivate,
+              ),
               const SizedBox(height: 18),
 
               // 6. 4-Week Cycle Cards
-              _buildCycleWeeksSection(isPrivate: isPrivate),
+              _buildCycleWeeksSection(
+                cycleWeeks: cycleWeeks,
+                isPrivate: isPrivate,
+              ),
               const SizedBox(height: 18),
 
               // 7. Category Envelopes
-              _buildCategoryEnvelopesSection(context, rawLimits, isPrivate),
+              _buildCategoryEnvelopesSection(context, ref, rawLimits, isPrivate),
               const SizedBox(height: 18),
 
               // 8. Upcoming Bills
@@ -194,7 +229,7 @@ class PlanScreen extends ConsumerWidget {
               const SizedBox(height: 18),
 
               // 9. Saving Goals Jars
-              _buildSavingGoalsSection(context, rawGoals, isPrivate),
+              _buildSavingGoalsSection(context, ref, rawGoals, isPrivate),
               const SizedBox(height: 24),
             ],
           ),
@@ -496,7 +531,13 @@ class PlanScreen extends ConsumerWidget {
     );
   }
 
-  Widget _buildPaceChartSection() {
+  Widget _buildPaceChartSection({
+    required int totalDays,
+    required int currentDay,
+    required double budget,
+    required List<double> spentByDay,
+    required bool isPrivate,
+  }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -510,18 +551,34 @@ class PlanScreen extends ConsumerWidget {
           ),
         ),
         const SizedBox(height: 10),
-        const PaceChart(),
+        PaceChart(
+          totalDays: totalDays,
+          currentDay: currentDay,
+          budget: budget,
+          spentByDay: spentByDay.isNotEmpty
+              ? spentByDay
+              : const [
+                  780.0, 650.0, 920.0, 450.0, 1100.0, 800.0, 600.0,
+                  750.0, 890.0, 950.0, 820.0, 740.0,
+                ],
+          isMasked: isPrivate,
+        ),
       ],
     );
   }
 
-  Widget _buildCycleWeeksSection({required bool isPrivate}) {
-    final weeks = [
-      {'title': 'Week 1', 'range': 'Mar 1 - 7', 'target': 6250.0, 'spent': 5800.0, 'status': 'Done'},
-      {'title': 'Week 2', 'range': 'Mar 8 - 14', 'target': 6250.0, 'spent': 3650.0, 'status': 'Now'},
-      {'title': 'Week 3', 'range': 'Mar 15 - 21', 'target': 6250.0, 'spent': 0.0, 'status': 'Upcoming'},
-      {'title': 'Week 4', 'range': 'Mar 22 - 30', 'target': 6250.0, 'spent': 0.0, 'status': 'Upcoming'},
-    ];
+  Widget _buildCycleWeeksSection({
+    required List<Map<String, dynamic>> cycleWeeks,
+    required bool isPrivate,
+  }) {
+    final weeks = cycleWeeks.isNotEmpty
+        ? cycleWeeks
+        : [
+            {'title': 'Week 1', 'range': 'Week 1', 'target': 6250.0, 'spent': 5800.0, 'status': 'Done'},
+            {'title': 'Week 2', 'range': 'Week 2', 'target': 6250.0, 'spent': 3650.0, 'status': 'Now'},
+            {'title': 'Week 3', 'range': 'Week 3', 'target': 6250.0, 'spent': 0.0, 'status': 'Upcoming'},
+            {'title': 'Week 4', 'range': 'Week 4', 'target': 6250.0, 'spent': 0.0, 'status': 'Upcoming'},
+          ];
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -642,6 +699,7 @@ class PlanScreen extends ConsumerWidget {
 
   Widget _buildCategoryEnvelopesSection(
     BuildContext context,
+    WidgetRef ref,
     List<Map<String, dynamic>> limits,
     bool isPrivate,
   ) {
@@ -670,7 +728,16 @@ class PlanScreen extends ConsumerWidget {
               ),
             ),
             GestureDetector(
-              onTap: () => EnvelopeEditSheet.show(context),
+              onTap: () => EnvelopeEditSheet.show(
+                context,
+                onSave: (cat, limit, mode) {
+                  ref.read(planControllerProvider).saveCategoryLimit(
+                        category: cat,
+                        limit: limit,
+                        mode: mode,
+                      );
+                },
+              ),
               child: const Text(
                 '+ Add',
                 style: TextStyle(
@@ -694,9 +761,24 @@ class PlanScreen extends ConsumerWidget {
             final spent = (env['spent'] as num?)?.toDouble() ?? 0.0;
             final limit = (env['limit'] ?? env['amount'] as num?)?.toDouble() ?? 1000.0;
             final isHard = (env['mode'] ?? env['limit_type'] ?? '') == 'hard';
+            final envId = env['id'] as String?;
 
             return GestureDetector(
-              onTap: () => EnvelopeEditSheet.show(context, envelope: env),
+              onTap: () => EnvelopeEditSheet.show(
+                context,
+                envelope: env,
+                onSave: (cat, limit, mode) {
+                  ref.read(planControllerProvider).saveCategoryLimit(
+                        category: cat,
+                        limit: limit,
+                        mode: mode,
+                        id: envId,
+                      );
+                },
+                onDelete: envId != null
+                    ? () => ref.read(planControllerProvider).deleteLimit(envId)
+                    : null,
+              ),
               child: Container(
                 padding: const EdgeInsets.all(14),
                 decoration: BoxDecoration(
@@ -857,6 +939,7 @@ class PlanScreen extends ConsumerWidget {
 
   Widget _buildSavingGoalsSection(
     BuildContext context,
+    WidgetRef ref,
     List<Map<String, dynamic>> goals,
     bool isPrivate,
   ) {
@@ -883,7 +966,17 @@ class PlanScreen extends ConsumerWidget {
               ),
             ),
             GestureDetector(
-              onTap: () => GoalEditSheet.show(context),
+              onTap: () => GoalEditSheet.show(
+                context,
+                onCreate: (name, target, date) {
+                  ref.read(planControllerProvider).saveSavingPlan(
+                        name: name,
+                        targetAmount: target,
+                        targetDate: DateTime.tryParse(date) ??
+                            DateTime.now().add(const Duration(days: 180)),
+                      );
+                },
+              ),
               child: const Text(
                 '+ New Goal',
                 style: TextStyle(
@@ -908,9 +1001,18 @@ class PlanScreen extends ConsumerWidget {
             final target = (g['target'] ?? g['target_amount'] as num?)?.toDouble() ?? 10000.0;
             final monthly = (g['monthly'] as num?)?.toDouble() ?? 1000.0;
             final ratio = target > 0 ? (current / target).clamp(0.0, 1.0) : 0.0;
+            final goalId = (g['id'] as String?) ?? '';
 
             return GestureDetector(
-              onTap: () => GoalEditSheet.show(context, goal: g),
+              onTap: () => GoalEditSheet.show(
+                context,
+                goal: g,
+                onFund: (amountAdded) {
+                  if (goalId.isNotEmpty) {
+                    ref.read(planControllerProvider).fundSavingPlan(goalId, amountAdded);
+                  }
+                },
+              ),
               child: Container(
                 padding: const EdgeInsets.all(14),
                 decoration: BoxDecoration(

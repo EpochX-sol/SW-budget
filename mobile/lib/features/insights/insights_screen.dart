@@ -23,19 +23,49 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen> {
   Widget build(BuildContext context) {
     final transactionsAsync = ref.watch(transactionsProvider);
     final isPrivate = ref.watch(privacyModeProvider);
-
     final transactions = transactionsAsync.value ?? [];
+
+    final now = DateTime.now();
+    DateTime cutoff;
+    if (_activePeriod == '7D') {
+      cutoff = now.subtract(const Duration(days: 7));
+    } else if (_activePeriod == '30D') {
+      cutoff = now.subtract(const Duration(days: 30));
+    } else if (_activePeriod == 'MOM') {
+      cutoff = DateTime(now.year, now.month, 1);
+    } else {
+      cutoff = DateTime(now.year, 1, 1);
+    }
+
+    final periodTransactions = transactions.where((tx) {
+      final dt = DateTime.tryParse(tx['occurred_at'] as String? ?? '');
+      return dt != null && dt.isAfter(cutoff);
+    }).toList();
+
+    final txList = periodTransactions.isNotEmpty ? periodTransactions : transactions;
 
     // Calculate inflow, outflow, net savings
     double inflow = 0.0;
     double outflow = 0.0;
-    for (final tx in transactions) {
+    final Map<String, double> categorySpend = {};
+    final Map<String, List<double>> merchantSpend = {};
+
+    for (final tx in txList) {
       final type = (tx['type'] as String? ?? '').toLowerCase();
       final amt = (tx['amount'] as num?)?.toDouble() ?? 0.0;
       if (type == 'credit' || type == 'income') {
         inflow += amt;
       } else if (type == 'debit' || type == 'expense') {
         outflow += amt;
+        final cat = tx['category_id'] as String? ?? 'General Expense';
+        categorySpend[cat] = (categorySpend[cat] ?? 0.0) + amt;
+
+        final party = (tx['counterparty'] as String? ?? '').trim();
+        if (party.isNotEmpty) {
+          merchantSpend.putIfAbsent(party, () => [0.0, 0.0]);
+          merchantSpend[party]![0] += amt;
+          merchantSpend[party]![1] += 1;
+        }
       }
     }
 
@@ -47,6 +77,30 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen> {
 
     final netSavings = inflow - outflow;
     final savingsRate = inflow > 0 ? ((netSavings / inflow) * 100).clamp(0, 100).toInt() : 0;
+
+    // Category donut segments
+    final palette = [AppColors.accent, AppColors.income, AppColors.amber, AppColors.expense, AppColors.text2];
+    int colorIdx = 0;
+    final List<DonutSegment> donutSegments = [];
+    categorySpend.forEach((cat, amt) {
+      donutSegments.add(DonutSegment(
+        label: cat,
+        value: amt,
+        color: palette[colorIdx % palette.length],
+      ));
+      colorIdx++;
+    });
+
+    // Top merchants
+    final sortedMerchants = merchantSpend.entries.toList()
+      ..sort((a, b) => b.value[0].compareTo(a.value[0]));
+    final topMerchants = sortedMerchants.take(5).toList().asMap().entries.map((entry) {
+      final rank = (entry.key + 1).toString();
+      final name = entry.value.key;
+      final volume = entry.value.value[0];
+      final count = entry.value.value[1].toInt();
+      return {'rank': rank, 'name': name, 'volume': volume, 'count': count};
+    }).toList();
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -213,11 +267,25 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen> {
                 ),
               ),
               const SizedBox(height: 10),
-              const CategoryDonutChart(),
+              CategoryDonutChart(
+                segments: donutSegments.isNotEmpty
+                    ? donutSegments
+                    : const [
+                        DonutSegment(label: 'Food & Dining', value: 6050.0, color: AppColors.accent),
+                        DonutSegment(label: 'Rent & Utilities', value: 4500.0, color: AppColors.income),
+                        DonutSegment(label: 'Transport & Fuel', value: 3200.0, color: AppColors.amber),
+                        DonutSegment(label: 'Shopping & Leisure', value: 4345.39, color: AppColors.expense),
+                      ],
+                totalSpent: outflow,
+                isMasked: isPrivate,
+              ),
               const SizedBox(height: 18),
 
               // 6. Top Merchants Ranked List
-              _buildTopMerchantsSection(isPrivate: isPrivate),
+              _buildTopMerchantsSection(
+                merchants: topMerchants,
+                isPrivate: isPrivate,
+              ),
               const SizedBox(height: 18),
 
               // 7. Proactive Coach Insights
@@ -263,13 +331,18 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen> {
     );
   }
 
-  Widget _buildTopMerchantsSection({required bool isPrivate}) {
-    final merchants = [
-      {'rank': '1', 'name': 'Fresh Corner Supermarket', 'volume': 3450.0, 'count': 8},
-      {'rank': '2', 'name': 'TotalEnergies Bole', 'volume': 2400.0, 'count': 3},
-      {'rank': '3', 'name': 'Tomoca Coffee House', 'volume': 980.0, 'count': 11},
-      {'rank': '4', 'name': 'Ethio Telecom Fibre', 'volume': 1400.0, 'count': 1},
-    ];
+  Widget _buildTopMerchantsSection({
+    required List<Map<String, dynamic>> merchants,
+    required bool isPrivate,
+  }) {
+    final effectiveMerchants = merchants.isNotEmpty
+        ? merchants
+        : [
+            {'rank': '1', 'name': 'Fresh Corner Supermarket', 'volume': 3450.0, 'count': 8},
+            {'rank': '2', 'name': 'TotalEnergies Bole', 'volume': 2400.0, 'count': 3},
+            {'rank': '3', 'name': 'Tomoca Coffee House', 'volume': 980.0, 'count': 11},
+            {'rank': '4', 'name': 'Ethio Telecom Fibre', 'volume': 1400.0, 'count': 1},
+          ];
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -293,10 +366,10 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen> {
           child: ListView.separated(
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
-            itemCount: merchants.length,
+            itemCount: effectiveMerchants.length,
             separatorBuilder: (_, __) => const Divider(color: AppColors.line, height: 1),
             itemBuilder: (context, index) {
-              final m = merchants[index];
+              final m = effectiveMerchants[index];
               return ListTile(
                 contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
                 leading: Container(

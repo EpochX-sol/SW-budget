@@ -255,6 +255,87 @@ class SyncEngine {
       }
     }
 
+    // 5. Push dirty Debts
+    final dirtyDebts = _database.getDirtyDebts(limit: batchSize);
+    if (dirtyDebts.isNotEmpty) {
+      final debtChanges = dirtyDebts.map((row) {
+        final totalAmount = (row['total_amount'] as num?)?.toDouble() ?? 0.0;
+        final paidAmount = (row['paid_amount'] as num?)?.toDouble() ?? 0.0;
+        final currentBalance = max(0.0, totalAmount - paidAmount);
+        final direction = row['direction'] as String? ?? 'owed_to_me';
+        final type = (direction == 'owed_to_me' || direction == 'lent') ? 'lent' : 'borrowed';
+
+        return {
+          'entity': 'loan_debt',
+          'op': row['deleted_at'] != null ? 'delete' : 'upsert',
+          'id': row['id'],
+          'client_updated_at': row['updated_at'] ?? row['created_at'],
+          'data': {
+            'type': type,
+            'direction': direction,
+            'counterparty': row['counterparty'],
+            'initial_amount': totalAmount,
+            'total_amount': totalAmount,
+            'current_balance': currentBalance,
+            'paid_amount': paidAmount,
+            'due_date': row['due_date'],
+            'note': row['note'],
+            'status': row['status'],
+          },
+        };
+      }).toList();
+
+      final response = await _apiClient.pushSync(
+        batchIndex: 1,
+        totalBatches: 1,
+        changes: debtChanges,
+        idempotencyKey: const Uuid().v4(),
+      );
+
+      final acceptedIds = (response['accepted_ids'] as List<dynamic>?)
+              ?.map((e) => e.toString())
+              .toList() ??
+          [];
+      final newCursor = (response['new_cursor'] as num?)?.toInt() ?? 0;
+      _database.markDebtsSynced(acceptedIds, newCursor);
+      totalPushed += acceptedIds.length;
+    }
+
+    // 6. Push dirty Reimbursements
+    final dirtyReimbursements = _database.getDirtyReimbursements(limit: batchSize);
+    if (dirtyReimbursements.isNotEmpty) {
+      final reimbChanges = dirtyReimbursements.map((row) {
+        return {
+          'entity': 'reimbursement',
+          'op': row['deleted_at'] != null ? 'delete' : 'upsert',
+          'id': row['id'],
+          'client_updated_at': row['updated_at'] ?? row['created_at'],
+          'data': {
+            'title': row['title'],
+            'amount': row['amount'],
+            'paid_amount': row['paid_amount'],
+            'status': row['status'],
+            'note': row['note'],
+          },
+        };
+      }).toList();
+
+      final response = await _apiClient.pushSync(
+        batchIndex: 1,
+        totalBatches: 1,
+        changes: reimbChanges,
+        idempotencyKey: const Uuid().v4(),
+      );
+
+      final acceptedIds = (response['accepted_ids'] as List<dynamic>?)
+              ?.map((e) => e.toString())
+              .toList() ??
+          [];
+      final newCursor = (response['new_cursor'] as num?)?.toInt() ?? 0;
+      _database.markReimbursementsSynced(acceptedIds, newCursor);
+      totalPushed += acceptedIds.length;
+    }
+
     return totalPushed;
   }
 
@@ -351,6 +432,50 @@ class SyncEngine {
             status: data['status'] as String? ?? 'active',
             changeSeq: changeSeq,
           );
+        } else if (entityType == 'loan_debt' || entityType == 'debt') {
+          if (op == 'delete') {
+            _database.deleteDebt(entityId);
+          } else {
+            final rawType = data['type'] as String? ?? (data['direction'] as String? ?? 'lent');
+            final direction = (rawType == 'lent' || rawType == 'owed_to_me') ? 'owed_to_me' : 'i_owe';
+            final initialAmt = (data['initial_amount'] as num?)?.toDouble() ??
+                (data['total_amount'] as num?)?.toDouble() ??
+                0.0;
+            final currentBal = (data['current_balance'] as num?)?.toDouble();
+            final paidAmt = (data['paid_amount'] as num?)?.toDouble() ??
+                (currentBal != null ? max(0.0, initialAmt - currentBal) : 0.0);
+            final counterparty = data['counterparty'] as String? ??
+                data['person_name'] as String? ??
+                'Contact';
+
+            _database.upsertDebt(
+              id: entityId,
+              direction: direction,
+              counterparty: counterparty,
+              totalAmount: initialAmt,
+              paidAmount: paidAmt,
+              dueDate: data['due_date'] as String?,
+              note: data['note'] as String?,
+              status: data['status'] as String? ?? 'active',
+              changeSeq: changeSeq,
+              isDirty: false,
+            );
+          }
+        } else if (entityType == 'reimbursement') {
+          if (op == 'delete') {
+            _database.deleteReimbursement(entityId);
+          } else {
+            _database.upsertReimbursement(
+              id: entityId,
+              title: data['title'] as String? ?? 'Claim',
+              amount: (data['amount'] as num?)?.toDouble() ?? 0.0,
+              paidAmount: (data['paid_amount'] as num?)?.toDouble() ?? 0.0,
+              status: data['status'] as String? ?? 'pending',
+              note: data['note'] as String?,
+              changeSeq: changeSeq,
+              isDirty: false,
+            );
+          }
         }
         totalPulled++;
       }

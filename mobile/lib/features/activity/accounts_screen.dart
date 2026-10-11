@@ -7,6 +7,7 @@ import '../../core/theme/app_colors.dart';
 import '../../core/widgets/brand_badge.dart';
 import '../../core/widgets/sheets/account_edit_sheet.dart';
 import '../../core/widgets/split_bar.dart';
+import '../../data/local/database_provider.dart';
 import 'activity_providers.dart';
 
 class AccountsScreen extends ConsumerWidget {
@@ -269,7 +270,20 @@ class AccountsScreen extends ConsumerWidget {
                       ),
                     ),
                     onTap: () {
-                      AccountEditSheet.show(context, account: acc);
+                      AccountEditSheet.show(
+                        context,
+                        account: acc,
+                        onToggleLiquid: (isLiquid) async {
+                          final db = await ref.read(databaseProvider.future);
+                          final accId = acc['id'] as String;
+                          db.updateAccountLockStatus(accId, !isLiquid);
+                        },
+                        onUpdateCashBalance: (newBalance) async {
+                          final db = await ref.read(databaseProvider.future);
+                          final accId = acc['id'] as String;
+                          db.updateAccountBalance(accId, newBalance);
+                        },
+                      );
                     },
                   );
                 },
@@ -295,6 +309,7 @@ class AccountsScreen extends ConsumerWidget {
             const SizedBox(height: 10),
             _buildCandidateCard(
               context,
+              ref,
               institution: 'boa',
               bankName: 'Bank of Abyssinia',
               smsCount: 4,
@@ -302,6 +317,7 @@ class AccountsScreen extends ConsumerWidget {
             const SizedBox(height: 8),
             _buildCandidateCard(
               context,
+              ref,
               institution: 'awash',
               bankName: 'Awash Bank',
               smsCount: 2,
@@ -325,7 +341,20 @@ class AccountsScreen extends ConsumerWidget {
                   style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
                 ),
                 onPressed: () {
-                  AccountEditSheet.show(context);
+                  AccountEditSheet.show(
+                    context,
+                    onUpdateCashBalance: (newBalance) async {
+                      final db = await ref.read(databaseProvider.future);
+                      db.upsertAccount(
+                        id: 'acc_cash',
+                        provider: 'CASH',
+                        name: 'Physical Cash',
+                        accountMask: 'Pocket wallet',
+                        lastKnownBalance: newBalance,
+                        isSavings: false,
+                      );
+                    },
+                  );
                 },
               ),
             ),
@@ -337,7 +366,8 @@ class AccountsScreen extends ConsumerWidget {
   }
 
   Widget _buildCandidateCard(
-    BuildContext context, {
+    BuildContext context,
+    WidgetRef ref, {
     required String institution,
     required String bankName,
     required int smsCount,
@@ -383,7 +413,16 @@ class AccountsScreen extends ConsumerWidget {
               'Connect',
               style: TextStyle(fontWeight: FontWeight.w700, fontSize: 11),
             ),
-            onPressed: () {
+            onPressed: () async {
+              final db = await ref.read(databaseProvider.future);
+              db.upsertAccount(
+                id: 'acc_${institution.toLowerCase()}',
+                provider: institution.toUpperCase(),
+                name: bankName,
+                accountMask: '•••• auto',
+                lastKnownBalance: 0.0,
+                isSavings: false,
+              );
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
                   content: Text('Linked $bankName to active tracking!'),

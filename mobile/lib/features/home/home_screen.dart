@@ -15,6 +15,7 @@ import '../../core/widgets/status_pill.dart';
 import '../../core/widgets/sync_pill.dart';
 import '../../domain/use_cases/budget_math_service.dart';
 import '../activity/activity_providers.dart';
+import '../debts/debts_providers.dart';
 import '../plan/plan_providers.dart';
 
 class HomeScreen extends ConsumerWidget {
@@ -28,6 +29,7 @@ class HomeScreen extends ConsumerWidget {
     final reviewCountAsync = ref.watch(reviewInboxCountProvider);
     final safeToSpend = ref.watch(safeToSpendProvider);
     final isPrivate = ref.watch(privacyModeProvider);
+    final debtsAsync = ref.watch(debtsStreamProvider);
 
     final user = authState.userProfile;
     final displayName = user?['display_name'] as String? ?? 'Samuel';
@@ -35,6 +37,13 @@ class HomeScreen extends ConsumerWidget {
     final accounts = accountsAsync.value ?? [];
     final transactions = transactionsAsync.value ?? [];
     final reviewCount = reviewCountAsync.value ?? 0;
+    final allDebts = debtsAsync.value ?? [];
+    final upcomingDueDebts = allDebts
+        .where((d) =>
+            d['status'] == 'active' &&
+            d['due_date'] != null &&
+            (d['due_date'] as String).isNotEmpty)
+        .toList();
 
     // Categorize liquid assets for SplitBar
     double bankTotal = 0.0;
@@ -60,14 +69,6 @@ class HomeScreen extends ConsumerWidget {
       }
     }
 
-    // Fallback prototype default numbers if accounts are empty
-    if (liquidTotal == 0.0 && accounts.isEmpty) {
-      liquidTotal = 26904.61;
-      bankTotal = 18450.00;
-      telebirrTotal = 6254.61;
-      cashTotal = 2200.00;
-    }
-
     // Compute today spend & allowance
     final now = DateTime.now();
     final todayStr = DateFormat('yyyy-MM-dd').format(now);
@@ -80,9 +81,11 @@ class HomeScreen extends ConsumerWidget {
       }
     }
 
-    final double safeToday = safeToSpend.safeToday > 0 ? safeToSpend.safeToday : 896.82;
+    final double safeToday = safeToSpend.safeToday > 0 ? safeToSpend.safeToday : 0.0;
     final double remainingToday = (safeToday - spentToday).clamp(0.0, double.infinity);
-    final double tomorrowAllowance = safeToday * (spentToday > safeToday ? 0.92 : 1.05);
+    final double tomorrowAllowance = safeToday > 0
+        ? safeToday * (spentToday > safeToday ? 0.92 : 1.05)
+        : 0.0;
 
     final statusString = safeToSpend.pace == SpendingPace.ahead
         ? 'AHEAD'
@@ -130,7 +133,7 @@ class HomeScreen extends ConsumerWidget {
                 bankTotal: bankTotal,
                 telebirrTotal: telebirrTotal,
                 cashTotal: cashTotal,
-                activeCount: accounts.isNotEmpty ? accounts.length : 3,
+                activeCount: accounts.length,
                 isPrivate: isPrivate,
               ),
               const SizedBox(height: 14),
@@ -153,20 +156,27 @@ class HomeScreen extends ConsumerWidget {
                 const SizedBox(height: 14),
               ],
 
-              // 6. Upcoming Bills Banner
-              _buildUpcomingBillBanner(),
-              const SizedBox(height: 18),
+              // 6. Upcoming Obligations Banner
+              if (upcomingDueDebts.isNotEmpty) ...[
+                _buildUpcomingBillBanner(upcomingDueDebts.first, isPrivate),
+                const SizedBox(height: 18),
+              ],
 
               // 7. Accounts Horizontal Carousel
               _buildAccountsSection(context, accounts, isPrivate),
               const SizedBox(height: 18),
 
               // 8. Coach Insight Card
-              _buildCoachInsightCard(context),
+              _buildCoachInsightCard(
+                context: context,
+                safeToSpend: safeToSpend,
+                safeToday: safeToday,
+                isPrivate: isPrivate,
+              ),
               const SizedBox(height: 18),
 
               // 9. Recent Activity List
-              _buildRecentActivitySection(context, transactions, isPrivate),
+              _buildRecentActivitySection(context, ref, transactions, isPrivate),
               const SizedBox(height: 24),
             ],
           ),
@@ -493,7 +503,14 @@ class HomeScreen extends ConsumerWidget {
     );
   }
 
-  Widget _buildUpcomingBillBanner() {
+  Widget _buildUpcomingBillBanner(Map<String, dynamic> debt, bool isPrivate) {
+    final name = (debt['counterparty'] ?? debt['title'] ?? 'Due obligation') as String;
+    final total = ((debt['total_amount'] ?? debt['amount']) as num?)?.toDouble() ?? 0.0;
+    final paid = ((debt['paid_amount'] ?? debt['paid']) as num?)?.toDouble() ?? 0.0;
+    final remaining = (total - paid).clamp(0.0, double.infinity);
+    final due = (debt['due_date'] ?? 'Upcoming') as String;
+    final formattedAmt = formatCurrency(remaining, isPrivate: isPrivate);
+
     return Container(
       decoration: BoxDecoration(
         color: AppColors.surface2,
@@ -505,10 +522,10 @@ class HomeScreen extends ConsumerWidget {
         children: [
           const Icon(Icons.receipt_long_outlined, color: AppColors.accent, size: 18),
           const SizedBox(width: 10),
-          const Expanded(
+          Expanded(
             child: Text(
-              'Ethio Telecom package ETB 450 due in 2 days',
-              style: TextStyle(
+              '$name · $formattedAmt ($due)',
+              style: const TextStyle(
                 color: AppColors.text,
                 fontSize: 12,
                 fontWeight: FontWeight.w600,
@@ -522,7 +539,7 @@ class HomeScreen extends ConsumerWidget {
               borderRadius: BorderRadius.circular(8),
             ),
             child: const Text(
-              'Reserved',
+              'Upcoming',
               style: TextStyle(
                 color: AppColors.text3,
                 fontSize: 10,
@@ -540,39 +557,6 @@ class HomeScreen extends ConsumerWidget {
     List<Map<String, dynamic>> accounts,
     bool isPrivate,
   ) {
-    // Prototype defaults if no accounts in DB yet
-    final displayAccounts = accounts.isNotEmpty
-        ? accounts
-        : [
-            {
-              'id': 'acc_cbe',
-              'account_name': 'Commercial Bank of Ethiopia',
-              'institution_id': 'cbe',
-              'account_type': 'bank',
-              'last_known_balance': 18450.00,
-              'account_number_mask': '•••• 4821',
-              'is_locked': false,
-            },
-            {
-              'id': 'acc_tb',
-              'account_name': 'Telebirr Wallet',
-              'institution_id': 'telebirr',
-              'account_type': 'mobile_money',
-              'last_known_balance': 6254.61,
-              'account_number_mask': '091 ••• 77',
-              'is_locked': false,
-            },
-            {
-              'id': 'acc_cash',
-              'account_name': 'Physical Cash',
-              'institution_id': 'cash',
-              'account_type': 'cash',
-              'last_known_balance': 2200.00,
-              'account_number_mask': 'Pocket wallet',
-              'is_locked': false,
-            },
-          ];
-
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -602,98 +586,163 @@ class HomeScreen extends ConsumerWidget {
           ],
         ),
         const SizedBox(height: 10),
-        SizedBox(
-          height: 114,
-          child: ListView.separated(
-            scrollDirection: Axis.horizontal,
-            itemCount: displayAccounts.length,
-            separatorBuilder: (_, __) => const SizedBox(width: 10),
-            itemBuilder: (context, index) {
-              final acc = displayAccounts[index];
-              final name = acc['account_name'] as String? ?? 'Account';
-              final inst = acc['institution_id'] as String? ?? '';
-              final mask = acc['account_number_mask'] as String? ?? '';
-              final bal = (acc['last_known_balance'] as num?)?.toDouble() ?? 0.0;
-              final isLocked = acc['is_locked'] == 1 || acc['is_locked'] == true;
-
-              return GestureDetector(
-                onTap: () => AccountEditSheet.show(context, account: acc),
-                child: Container(
-                  width: 170,
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: AppColors.surface,
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: AppColors.line),
+        if (accounts.isEmpty)
+          GestureDetector(
+            onTap: () => context.push('/accounts'),
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
+              decoration: BoxDecoration(
+                color: AppColors.surface,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: AppColors.line),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 38,
+                    height: 38,
+                    decoration: const BoxDecoration(
+                      color: AppColors.accentBg,
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.account_balance_wallet_outlined, color: AppColors.accent, size: 20),
                   ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          BrandBadge(institution: inst, size: 24),
-                          if (isLocked)
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-                              decoration: BoxDecoration(
-                                color: AppColors.surface3,
-                                borderRadius: BorderRadius.circular(6),
-                              ),
-                              child: const Text(
-                                'Locked',
-                                style: TextStyle(
-                                  color: AppColors.text3,
-                                  fontSize: 9,
-                                  fontWeight: FontWeight.w600,
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'No active accounts connected',
+                          style: TextStyle(color: AppColors.text, fontSize: 13, fontWeight: FontWeight.w700),
+                        ),
+                        SizedBox(height: 2),
+                        Text(
+                          'Tap to link bank SMS or add a cash wallet',
+                          style: TextStyle(color: AppColors.text3, fontSize: 11),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Icon(Icons.chevron_right, color: AppColors.text3, size: 20),
+                ],
+              ),
+            ),
+          )
+        else
+          SizedBox(
+            height: 114,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: accounts.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 10),
+              itemBuilder: (context, index) {
+                final acc = accounts[index];
+                final name = acc['account_name'] as String? ?? 'Account';
+                final inst = acc['institution_id'] as String? ?? '';
+                final mask = acc['account_number_mask'] as String? ?? '';
+                final bal = (acc['last_known_balance'] as num?)?.toDouble() ?? 0.0;
+                final isLocked = acc['is_locked'] == 1 || acc['is_locked'] == true;
+
+                return GestureDetector(
+                  onTap: () => AccountEditSheet.show(context, account: acc),
+                  child: Container(
+                    width: 170,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: AppColors.surface,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: AppColors.line),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            BrandBadge(institution: inst, size: 24),
+                            if (isLocked)
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: AppColors.surface3,
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: const Text(
+                                  'Locked',
+                                  style: TextStyle(
+                                    color: AppColors.text3,
+                                    fontSize: 9,
+                                    fontWeight: FontWeight.w600,
+                                  ),
                                 ),
                               ),
-                            ),
-                        ],
-                      ),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            name,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: AppColors.text,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                          Text(
-                            mask,
-                            style: const TextStyle(
-                              color: AppColors.text3,
-                              fontSize: 10,
-                            ),
-                          ),
-                        ],
-                      ),
-                      Text(
-                        formatCurrency(bal, isPrivate: isPrivate),
-                        style: const TextStyle(
-                          color: AppColors.text,
-                          fontSize: 14,
-                          fontWeight: FontWeight.w800,
+                          ],
                         ),
-                      ),
-                    ],
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: AppColors.text,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            Text(
+                              mask,
+                              style: const TextStyle(
+                                color: AppColors.text3,
+                                fontSize: 10,
+                              ),
+                            ),
+                          ],
+                        ),
+                        Text(
+                          formatCurrency(bal, isPrivate: isPrivate),
+                          style: const TextStyle(
+                            color: AppColors.text,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-              );
-            },
+                );
+              },
+            ),
           ),
-        ),
       ],
     );
   }
 
-  Widget _buildCoachInsightCard(BuildContext context) {
+  Widget _buildCoachInsightCard({
+    required BuildContext context,
+    required SafeToSpendResult safeToSpend,
+    required double safeToday,
+    required bool isPrivate,
+  }) {
+    String insightText;
+    if (safeToSpend.pace == SpendingPace.ahead) {
+      insightText = 'Spending is currently ahead of pace. You are maintaining excellent discipline this cycle—extra reserves are protected for your savings goals.';
+    } else if (safeToSpend.pace == SpendingPace.caution) {
+      insightText = 'Heads up: Spending has accelerated slightly today. Pacing yourself on discretionary expenses over the next 48 hours will restore your target trajectory.';
+    } else if (safeToSpend.pace == SpendingPace.deficit) {
+      insightText = 'Alert: Today\'s outlays exceeded the daily allowance. Check your Plan envelopes to rebalance discretionary limits.';
+    } else {
+      if (safeToday > 0) {
+        insightText = 'Your spending pace is healthy and within your planned daily allowance of ${formatCurrency(safeToday, isPrivate: isPrivate)}. Keep tracking consistent!';
+      } else {
+        insightText = 'Welcome to SW Budget! Set up your monthly target in the Plan tab to unlock dynamic daily pacing recommendations.';
+      }
+    }
+
     return Container(
       decoration: BoxDecoration(
         color: AppColors.surface,
@@ -719,9 +768,9 @@ class HomeScreen extends ConsumerWidget {
             ],
           ),
           const SizedBox(height: 8),
-          const Text(
-            'You are spending 18% less on Dining this week compared to last week. On this pace, you will finish the cycle with ETB 1,840 to divert into Emergency Fund.',
-            style: TextStyle(
+          Text(
+            insightText,
+            style: const TextStyle(
               color: AppColors.text,
               fontSize: 13,
               height: 1.4,
@@ -752,6 +801,7 @@ class HomeScreen extends ConsumerWidget {
 
   Widget _buildRecentActivitySection(
     BuildContext context,
+    WidgetRef ref,
     List<Map<String, dynamic>> transactions,
     bool isPrivate,
   ) {
@@ -879,7 +929,30 @@ class HomeScreen extends ConsumerWidget {
                     ),
                   ),
                   onTap: () {
-                    TransactionDetailSheet.show(context, transaction: tx);
+                    final txId = (tx['id'] as String?) ?? '';
+                    TransactionDetailSheet.show(
+                      context,
+                      transaction: tx,
+                      onSave: (newCat, newNote) {
+                        if (txId.isNotEmpty) {
+                          ref.read(transactionControllerProvider).updateDetails(
+                                id: txId,
+                                category: newCat,
+                                note: newNote,
+                              );
+                        }
+                      },
+                      onMarkTransfer: () {
+                        if (txId.isNotEmpty) {
+                          ref.read(transactionControllerProvider).markTransfer(txId);
+                        }
+                      },
+                      onDelete: () {
+                        if (txId.isNotEmpty) {
+                          ref.read(transactionControllerProvider).delete(txId);
+                        }
+                      },
+                    );
                   },
                 );
               },

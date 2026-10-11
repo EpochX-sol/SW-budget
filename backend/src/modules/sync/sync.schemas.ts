@@ -13,6 +13,7 @@ export const syncChangeItemSchema = z.object({
     'reimbursement',
     'contact_person',
     'loan_debt',
+    'debt',
     'loan_repayment',
   ]),
   op: z.enum(['upsert', 'delete']),

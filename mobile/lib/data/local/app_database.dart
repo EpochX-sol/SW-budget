@@ -89,6 +89,8 @@ enum DatabaseTable {
   savingPlans,
   syncState,
   unparsedMessages,
+  debts,
+  reimbursements,
 }
 
 /// Encrypted Local SQLite Database using SQLCipher (AES-256)
@@ -258,7 +260,43 @@ class AppDatabase {
         reason TEXT,
         status TEXT NOT NULL DEFAULT 'pending'
       );
+
+      CREATE TABLE IF NOT EXISTS local_debts (
+        id TEXT PRIMARY KEY,
+        direction TEXT NOT NULL,
+        counterparty TEXT NOT NULL,
+        total_amount REAL NOT NULL,
+        paid_amount REAL NOT NULL DEFAULT 0.0,
+        due_date TEXT,
+        note TEXT,
+        status TEXT NOT NULL DEFAULT 'active',
+        change_seq INTEGER NOT NULL DEFAULT 0,
+        is_dirty INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL,
+        updated_at TEXT,
+        deleted_at TEXT
+      );
+
+      CREATE TABLE IF NOT EXISTS local_reimbursements (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        amount REAL NOT NULL,
+        paid_amount REAL NOT NULL DEFAULT 0.0,
+        status TEXT NOT NULL DEFAULT 'pending',
+        note TEXT,
+        change_seq INTEGER NOT NULL DEFAULT 0,
+        is_dirty INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL,
+        updated_at TEXT,
+        deleted_at TEXT
+      );
     ''');
+
+    // Migration safe guards for existing local db instances
+    try { _db.execute('ALTER TABLE local_debts ADD COLUMN change_seq INTEGER NOT NULL DEFAULT 0;'); } catch (_) {}
+    try { _db.execute('ALTER TABLE local_debts ADD COLUMN is_dirty INTEGER NOT NULL DEFAULT 1;'); } catch (_) {}
+    try { _db.execute('ALTER TABLE local_reimbursements ADD COLUMN change_seq INTEGER NOT NULL DEFAULT 0;'); } catch (_) {}
+    try { _db.execute('ALTER TABLE local_reimbursements ADD COLUMN is_dirty INTEGER NOT NULL DEFAULT 1;'); } catch (_) {}
   }
 
   // --- ACCOUNTS ---
@@ -289,7 +327,6 @@ class AppDatabase {
     DateTime? createdAt,
     DateTime? updatedAt,
   }) {
-    final now = DateTime.now().toIso8601String();
     final created = (createdAt ?? DateTime.now()).toIso8601String();
     final updated = (updatedAt ?? DateTime.now()).toIso8601String();
 
@@ -346,6 +383,24 @@ class AppDatabase {
     _db.execute(
       'UPDATE local_accounts SET deleted_at = ?, updated_at = ?, is_dirty = 1 WHERE id = ?;',
       [now, now, id],
+    );
+    _notify(DatabaseTable.accounts);
+  }
+
+  void updateAccountBalance(String id, double newBalance) {
+    final now = DateTime.now().toIso8601String();
+    _db.execute(
+      'UPDATE local_accounts SET last_known_balance = ?, updated_at = ?, is_dirty = 1 WHERE id = ?;',
+      [newBalance, now, id],
+    );
+    _notify(DatabaseTable.accounts);
+  }
+
+  void updateAccountLockStatus(String id, bool isLocked) {
+    final now = DateTime.now().toIso8601String();
+    _db.execute(
+      'UPDATE local_accounts SET is_savings = ?, updated_at = ?, is_dirty = 1 WHERE id = ?;',
+      [isLocked ? 1 : 0, now, id],
     );
     _notify(DatabaseTable.accounts);
   }
@@ -631,6 +686,28 @@ class AppDatabase {
     _notify(DatabaseTable.transactions);
   }
 
+  void updateTransactionCategoryAndNote({
+    required String id,
+    required String categoryId,
+    required String note,
+  }) {
+    final now = DateTime.now().toIso8601String();
+    _db.execute(
+      'UPDATE local_transactions SET category_id = ?, note = ?, updated_at = ?, is_dirty = 1 WHERE id = ?;',
+      [categoryId, note, now, id],
+    );
+    _notify(DatabaseTable.transactions);
+  }
+
+  void markTransactionAsTransfer(String id) {
+    final now = DateTime.now().toIso8601String();
+    _db.execute(
+      "UPDATE local_transactions SET type = 'transfer', updated_at = ?, is_dirty = 1 WHERE id = ?;",
+      [now, id],
+    );
+    _notify(DatabaseTable.transactions);
+  }
+
   // --- LIMITS ---
 
   List<Map<String, dynamic>> getLimits({bool includeDeleted = false}) {
@@ -712,6 +789,15 @@ class AppDatabase {
     _notify(DatabaseTable.limits);
   }
 
+  void deleteLimit(String id) {
+    final now = DateTime.now().toIso8601String();
+    _db.execute(
+      'UPDATE local_limits SET deleted_at = ?, updated_at = ?, is_dirty = 1 WHERE id = ?;',
+      [now, now, id],
+    );
+    _notify(DatabaseTable.limits);
+  }
+
   // --- SAVING PLANS ---
 
   List<Map<String, dynamic>> getSavingPlans({bool includeDeleted = false}) {
@@ -783,6 +869,24 @@ class AppDatabase {
     _notify(DatabaseTable.savingPlans);
   }
 
+  void deleteSavingPlan(String id) {
+    final now = DateTime.now().toIso8601String();
+    _db.execute(
+      'UPDATE local_saving_plans SET deleted_at = ?, updated_at = ?, is_dirty = 1 WHERE id = ?;',
+      [now, now, id],
+    );
+    _notify(DatabaseTable.savingPlans);
+  }
+
+  void addSavingPlanFunding(String id, double additionalAmount) {
+    final now = DateTime.now().toIso8601String();
+    _db.execute(
+      'UPDATE local_saving_plans SET current_amount = current_amount + ?, updated_at = ?, is_dirty = 1 WHERE id = ?;',
+      [additionalAmount, now, id],
+    );
+    _notify(DatabaseTable.savingPlans);
+  }
+
   // --- SYNC STATE ---
 
   int getLastSyncCursor({String key = 'global_sync'}) {
@@ -839,6 +943,184 @@ class AppDatabase {
     _notify(DatabaseTable.unparsedMessages);
   }
 
+  // --- DEBTS & REIMBURSEMENTS ---
+
+  List<Map<String, dynamic>> getDebts({bool includeSettled = false}) {
+    final query = includeSettled
+        ? 'SELECT * FROM local_debts WHERE deleted_at IS NULL ORDER BY created_at DESC;'
+        : "SELECT * FROM local_debts WHERE deleted_at IS NULL AND status = 'active' ORDER BY created_at DESC;";
+    final result = _db.select(query);
+    return result.map((row) => Map<String, dynamic>.from(row)).toList();
+  }
+
+  void upsertDebt({
+    required String id,
+    required String direction,
+    required String counterparty,
+    required double totalAmount,
+    double paidAmount = 0.0,
+    String? dueDate,
+    String? note,
+    String status = 'active',
+    int changeSeq = 0,
+    bool isDirty = true,
+  }) {
+    final now = DateTime.now().toIso8601String();
+    _db.execute('''
+      INSERT INTO local_debts (
+        id, direction, counterparty, total_amount, paid_amount, due_date, note, status, change_seq, is_dirty, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        direction = excluded.direction,
+        counterparty = excluded.counterparty,
+        total_amount = excluded.total_amount,
+        paid_amount = excluded.paid_amount,
+        due_date = excluded.due_date,
+        note = excluded.note,
+        status = excluded.status,
+        change_seq = excluded.change_seq,
+        is_dirty = excluded.is_dirty,
+        updated_at = excluded.updated_at,
+        deleted_at = NULL;
+    ''', [
+      id,
+      direction,
+      counterparty,
+      totalAmount,
+      paidAmount,
+      dueDate,
+      note,
+      status,
+      changeSeq,
+      isDirty ? 1 : 0,
+      now,
+      now,
+    ]);
+    _notify(DatabaseTable.debts);
+  }
+
+  void settleDebt(String id) {
+    final now = DateTime.now().toIso8601String();
+    _db.execute(
+      "UPDATE local_debts SET paid_amount = total_amount, status = 'settled', is_dirty = 1, updated_at = ? WHERE id = ?;",
+      [now, id],
+    );
+    _notify(DatabaseTable.debts);
+  }
+
+  void deleteDebt(String id) {
+    final now = DateTime.now().toIso8601String();
+    _db.execute(
+      'UPDATE local_debts SET deleted_at = ?, updated_at = ?, is_dirty = 1 WHERE id = ?;',
+      [now, now, id],
+    );
+    _notify(DatabaseTable.debts);
+  }
+
+  List<Map<String, dynamic>> getDirtyDebts({int limit = 100}) {
+    final result = _db.select(
+      'SELECT * FROM local_debts WHERE is_dirty = 1 ORDER BY created_at ASC LIMIT ?;',
+      [limit],
+    );
+    return result.map((row) => Map<String, dynamic>.from(row)).toList();
+  }
+
+  void markDebtsSynced(List<String> ids, int newChangeSeq) {
+    if (ids.isEmpty) return;
+    final placeholders = List.filled(ids.length, '?').join(',');
+    final now = DateTime.now().toIso8601String();
+    _db.execute(
+      'UPDATE local_debts SET is_dirty = 0, change_seq = ?, updated_at = ? WHERE id IN ($placeholders);',
+      [newChangeSeq, now, ...ids],
+    );
+    _notify(DatabaseTable.debts);
+  }
+
+  List<Map<String, dynamic>> getReimbursements({bool includeSettled = false}) {
+    final query = includeSettled
+        ? 'SELECT * FROM local_reimbursements WHERE deleted_at IS NULL ORDER BY created_at DESC;'
+        : "SELECT * FROM local_reimbursements WHERE deleted_at IS NULL AND status = 'pending' ORDER BY created_at DESC;";
+    final result = _db.select(query);
+    return result.map((row) => Map<String, dynamic>.from(row)).toList();
+  }
+
+  void upsertReimbursement({
+    required String id,
+    required String title,
+    required double amount,
+    double paidAmount = 0.0,
+    String status = 'pending',
+    String? note,
+    int changeSeq = 0,
+    bool isDirty = true,
+  }) {
+    final now = DateTime.now().toIso8601String();
+    _db.execute('''
+      INSERT INTO local_reimbursements (
+        id, title, amount, paid_amount, status, note, change_seq, is_dirty, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        title = excluded.title,
+        amount = excluded.amount,
+        paid_amount = excluded.paid_amount,
+        status = excluded.status,
+        note = excluded.note,
+        change_seq = excluded.change_seq,
+        is_dirty = excluded.is_dirty,
+        updated_at = excluded.updated_at,
+        deleted_at = NULL;
+    ''', [
+      id,
+      title,
+      amount,
+      paidAmount,
+      status,
+      note,
+      changeSeq,
+      isDirty ? 1 : 0,
+      now,
+      now,
+    ]);
+    _notify(DatabaseTable.reimbursements);
+  }
+
+  void settleReimbursement(String id) {
+    final now = DateTime.now().toIso8601String();
+    _db.execute(
+      "UPDATE local_reimbursements SET paid_amount = amount, status = 'settled', is_dirty = 1, updated_at = ? WHERE id = ?;",
+      [now, id],
+    );
+    _notify(DatabaseTable.reimbursements);
+  }
+
+  void deleteReimbursement(String id) {
+    final now = DateTime.now().toIso8601String();
+    _db.execute(
+      'UPDATE local_reimbursements SET deleted_at = ?, updated_at = ?, is_dirty = 1 WHERE id = ?;',
+      [now, now, id],
+    );
+    _notify(DatabaseTable.reimbursements);
+  }
+
+  List<Map<String, dynamic>> getDirtyReimbursements({int limit = 100}) {
+    final result = _db.select(
+      'SELECT * FROM local_reimbursements WHERE is_dirty = 1 ORDER BY created_at ASC LIMIT ?;',
+      [limit],
+    );
+    return result.map((row) => Map<String, dynamic>.from(row)).toList();
+  }
+
+  void markReimbursementsSynced(List<String> ids, int newChangeSeq) {
+    if (ids.isEmpty) return;
+    final placeholders = List.filled(ids.length, '?').join(',');
+    final now = DateTime.now().toIso8601String();
+    _db.execute(
+      'UPDATE local_reimbursements SET is_dirty = 0, change_seq = ?, updated_at = ? WHERE id IN ($placeholders);',
+      [newChangeSeq, now, ...ids],
+    );
+    _notify(DatabaseTable.reimbursements);
+  }
+
   void _notify(DatabaseTable table) {
     if (!_changeController.isClosed) {
       _changeController.add(table);
@@ -853,11 +1135,15 @@ class AppDatabase {
     _db.execute('DELETE FROM local_saving_plans;');
     _db.execute('DELETE FROM local_sync_state;');
     _db.execute('DELETE FROM local_unparsed_messages;');
+    _db.execute('DELETE FROM local_debts;');
+    _db.execute('DELETE FROM local_reimbursements;');
     _notify(DatabaseTable.transactions);
     _notify(DatabaseTable.accounts);
     _notify(DatabaseTable.categories);
     _notify(DatabaseTable.limits);
     _notify(DatabaseTable.savingPlans);
+    _notify(DatabaseTable.debts);
+    _notify(DatabaseTable.reimbursements);
   }
 
   void close() {

@@ -375,39 +375,72 @@ export class SyncRepository {
               },
             });
           }
-        } else if (entity === 'loan_debt') {
+        } else if (entity === 'loan_debt' || entity === 'debt') {
           if (op === 'delete') {
             await tx.loanDebt.updateMany({
               where: { id, userId },
               data: { deletedAt: new Date(), changeSeq: itemSeq },
             });
           } else {
-            await tx.loanDebt.upsert({
-              where: { id },
-              create: {
-                id,
-                userId,
-                personId: data.person_id,
-                type: data.type || 'borrowed',
-                initialAmount: new Prisma.Decimal(data.initial_amount || 0),
-                currentBalance: new Prisma.Decimal(data.current_balance || 0),
-                dueDate: data.due_date ? new Date(data.due_date) : null,
-                status: data.status || 'active',
-                note: data.note || null,
-                changeSeq: itemSeq,
-              },
-              update: {
-                personId: data.person_id,
-                type: data.type || 'borrowed',
-                initialAmount: new Prisma.Decimal(data.initial_amount || 0),
-                currentBalance: new Prisma.Decimal(data.current_balance || 0),
-                dueDate: data.due_date ? new Date(data.due_date) : null,
-                status: data.status || 'active',
-                note: data.note || null,
-                changeSeq: itemSeq,
-                deletedAt: null,
-              },
-            });
+            let personId = data.person_id;
+            if (!personId && data.counterparty) {
+              const existingPerson = await tx.contactPerson.findFirst({
+                where: { userId, name: data.counterparty, deletedAt: null },
+              });
+              if (existingPerson) {
+                personId = existingPerson.id;
+              } else {
+                const newPerson = await tx.contactPerson.create({
+                  data: {
+                    userId,
+                    name: data.counterparty,
+                    changeSeq: itemSeq,
+                  },
+                });
+                personId = newPerson.id;
+              }
+            }
+
+            const initialAmount = data.initial_amount != null
+              ? new Prisma.Decimal(data.initial_amount)
+              : new Prisma.Decimal(data.total_amount || 0);
+
+            const currentBalance = data.current_balance != null
+              ? new Prisma.Decimal(data.current_balance)
+              : data.paid_amount != null
+                ? new Prisma.Decimal(Math.max(0, Number(data.total_amount || 0) - Number(data.paid_amount || 0)))
+                : initialAmount;
+
+            const type = data.type || ((data.direction === 'owed_to_me' || data.direction === 'lent') ? 'lent' : 'borrowed');
+
+            if (personId) {
+              await tx.loanDebt.upsert({
+                where: { id },
+                create: {
+                  id,
+                  userId,
+                  personId,
+                  type,
+                  initialAmount,
+                  currentBalance,
+                  dueDate: data.due_date ? new Date(data.due_date) : null,
+                  status: data.status || 'active',
+                  note: data.note || null,
+                  changeSeq: itemSeq,
+                },
+                update: {
+                  personId,
+                  type,
+                  initialAmount,
+                  currentBalance,
+                  dueDate: data.due_date ? new Date(data.due_date) : null,
+                  status: data.status || 'active',
+                  note: data.note || null,
+                  changeSeq: itemSeq,
+                  deletedAt: null,
+                },
+              });
+            }
           }
         } else if (entity === 'loan_repayment') {
           if (op === 'delete') {
@@ -539,6 +572,7 @@ export class SyncRepository {
       }),
       prisma.loanDebt.findMany({
         where: { userId, changeSeq: { gt: cursor } },
+        include: { person: true },
         orderBy: { changeSeq: 'asc' },
         take: limit,
       }),
@@ -739,9 +773,13 @@ export class SyncRepository {
         change_seq: ld.changeSeq,
         data: {
           person_id: ld.personId,
+          counterparty: (ld as any).person?.name || 'Contact',
           type: ld.type,
+          direction: ld.type === 'lent' ? 'owed_to_me' : 'i_owe',
           initial_amount: ld.initialAmount.toString(),
+          total_amount: ld.initialAmount.toString(),
           current_balance: ld.currentBalance.toString(),
+          paid_amount: (Number(ld.initialAmount) - Number(ld.currentBalance)).toString(),
           due_date: ld.dueDate ? ld.dueDate.toISOString().slice(0, 10) : null,
           status: ld.status,
           note: ld.note,
