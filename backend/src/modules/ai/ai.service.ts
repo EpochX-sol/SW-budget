@@ -5,6 +5,7 @@ import { prisma } from '../../db/prisma.js';
 import { env } from '../../config/env.js';
 import { financeTools, GEMINI_TOOL_DECLARATIONS, OPENAI_TOOL_DECLARATIONS } from './tools/finance-tools.js';
 import { aiMemoryService } from './ai-memory.service.js';
+import { toDeterministicUuid } from '../sync/sync.repository.js';
 
 const MONTHLY_TOKEN_LIMIT = 50000;
 
@@ -125,20 +126,25 @@ export class AiService {
     // 1. Check Token Quota
     await this.checkTokenBudget(userId);
 
-    // 2. Verify Thread
-    const thread = await prisma.aiThread.findFirst({
-      where: { id: threadId, userId },
+    // 2. Normalize and Verify or Auto-Create Thread
+    const normalizedThreadId = toDeterministicUuid(threadId);
+    let thread = await prisma.aiThread.findFirst({
+      where: { id: normalizedThreadId, userId },
     });
     if (!thread) {
-      const err = new Error('Thread not found');
-      (err as any).statusCode = 404;
-      throw err;
+      thread = await prisma.aiThread.create({
+        data: {
+          id: normalizedThreadId,
+          userId,
+          title: 'Financial Coach',
+        },
+      });
     }
 
     // 3. Save User Message
     const userMsg = await prisma.aiMessage.create({
       data: {
-        threadId,
+        threadId: normalizedThreadId,
         role: 'user',
         content: userContent,
       },
@@ -172,7 +178,7 @@ export class AiService {
       if (useOpenRouter) {
         try {
           const previousMessages = await prisma.aiMessage.findMany({
-            where: { threadId, id: { not: userMsg.id } },
+            where: { threadId: normalizedThreadId, id: { not: userMsg.id } },
             orderBy: { createdAt: 'desc' },
             take: 6,
           });
@@ -335,7 +341,7 @@ export class AiService {
       // 7. Save Assistant Message
       const assistantMsg = await prisma.aiMessage.create({
         data: {
-          threadId,
+          threadId: normalizedThreadId,
           role: 'assistant',
           content: assistantText,
           toolCalls: toolCallsExecuted.length > 0 ? toolCallsExecuted : undefined,
@@ -345,7 +351,7 @@ export class AiService {
 
       // Update thread timestamp
       await prisma.aiThread.update({
-        where: { id: threadId },
+        where: { id: normalizedThreadId },
         data: { updatedAt: new Date() },
       });
 
