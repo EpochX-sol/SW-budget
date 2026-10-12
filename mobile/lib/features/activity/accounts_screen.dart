@@ -19,38 +19,7 @@ class AccountsScreen extends ConsumerWidget {
     final isPrivate = ref.watch(privacyModeProvider);
 
     final rawAccounts = accountsAsync.value ?? [];
-
-    final accounts = rawAccounts.isNotEmpty
-        ? rawAccounts
-        : [
-            {
-              'id': 'acc_cbe',
-              'account_name': 'Commercial Bank of Ethiopia',
-              'institution_id': 'cbe',
-              'account_type': 'bank',
-              'last_known_balance': 18450.00,
-              'account_number_mask': '•••• 4821',
-              'is_locked': false,
-            },
-            {
-              'id': 'acc_tb',
-              'account_name': 'Telebirr Wallet',
-              'institution_id': 'telebirr',
-              'account_type': 'mobile_money',
-              'last_known_balance': 6254.61,
-              'account_number_mask': '091 ••• 77',
-              'is_locked': false,
-            },
-            {
-              'id': 'acc_cash',
-              'account_name': 'Physical Cash',
-              'institution_id': 'cash',
-              'account_type': 'cash',
-              'last_known_balance': 2200.00,
-              'account_number_mask': 'Pocket wallet',
-              'is_locked': false,
-            },
-          ];
+    final accounts = rawAccounts;
 
     double bankTotal = 0.0;
     double telebirrTotal = 0.0;
@@ -209,11 +178,32 @@ class AccountsScreen extends ConsumerWidget {
                 borderRadius: BorderRadius.circular(16),
                 border: Border.all(color: AppColors.line),
               ),
-              child: ListView.separated(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                itemCount: accounts.length,
-                separatorBuilder: (_, __) => const Divider(color: AppColors.line, height: 1),
+              child: accounts.isEmpty
+                  ? const Padding(
+                      padding: EdgeInsets.all(24),
+                      child: Center(
+                        child: Column(
+                          children: [
+                            Icon(Icons.account_balance_outlined, color: AppColors.text3, size: 36),
+                            SizedBox(height: 10),
+                            Text(
+                              'No accounts linked yet',
+                              style: TextStyle(color: AppColors.text, fontSize: 14, fontWeight: FontWeight.w700),
+                            ),
+                            SizedBox(height: 4),
+                            Text(
+                              'Connect a bank below or tap + to track cash',
+                              style: TextStyle(color: AppColors.text3, fontSize: 11),
+                            ),
+                          ],
+                        ),
+                      ),
+                    )
+                  : ListView.separated(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      itemCount: accounts.length,
+                      separatorBuilder: (_, __) => const Divider(color: AppColors.line, height: 1),
                 itemBuilder: (context, index) {
                   final acc = accounts[index];
                   final name = acc['account_name'] as String? ?? 'Account';

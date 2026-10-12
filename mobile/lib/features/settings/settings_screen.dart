@@ -195,26 +195,44 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     style: TextStyle(color: AppColors.text3, fontSize: 11, height: 1.4),
                   ),
                   const SizedBox(height: 12),
-                  SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton.icon(
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: AppColors.accent,
-                        side: const BorderSide(color: AppColors.line),
-                        backgroundColor: AppColors.surface2,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                        padding: const EdgeInsets.symmetric(vertical: 10),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: AppColors.accent,
+                            side: const BorderSide(color: AppColors.line),
+                            backgroundColor: AppColors.surface2,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                            padding: const EdgeInsets.symmetric(vertical: 10),
+                          ),
+                          icon: const Icon(Icons.file_download_outlined, size: 16),
+                          label: const Text('Export Statement', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12)),
+                          onPressed: () => ExportStatementSheet.show(
+                            context,
+                            onGenerate: (period, format) async {
+                              final exportService = await ref.read(backupExportServiceProvider.future);
+                              await exportService.exportTransactionsCsv(period: period, format: format);
+                            },
+                          ),
+                        ),
                       ),
-                      icon: const Icon(Icons.file_download_outlined, size: 16),
-                      label: const Text('Export Tax Statement', style: TextStyle(fontWeight: FontWeight.w700)),
-                      onPressed: () => ExportStatementSheet.show(
-                        context,
-                        onGenerate: (period, format) async {
-                          final exportService = await ref.read(backupExportServiceProvider.future);
-                          await exportService.exportTransactionsCsv(period: period, format: format);
-                        },
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: AppColors.income,
+                            side: const BorderSide(color: AppColors.line),
+                            backgroundColor: AppColors.surface2,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                            padding: const EdgeInsets.symmetric(vertical: 10),
+                          ),
+                          icon: const Icon(Icons.shield_outlined, size: 16),
+                          label: const Text('Backup Vault', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12)),
+                          onPressed: () => _showCreateBackupDialog(),
+                        ),
                       ),
-                    ),
+                    ],
                   ),
                 ],
               ),
@@ -404,6 +422,88 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               ),
             ),
             const SizedBox(height: 32),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showCreateBackupDialog() {
+    final passwordCtrl = TextEditingController();
+    bool isObscured = true;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          backgroundColor: AppColors.surface,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: const Row(
+            children: [
+              Icon(Icons.shield_rounded, color: AppColors.income, size: 22),
+              SizedBox(width: 8),
+              Text('Encrypted Backup', style: TextStyle(color: AppColors.text, fontSize: 16, fontWeight: FontWeight.w800)),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Enter a password to encrypt your complete financial ledger with AES-256-GCM. You will need this password to restore your vault.',
+                style: TextStyle(color: AppColors.text2, fontSize: 12, height: 1.4),
+              ),
+              const SizedBox(height: 14),
+              TextField(
+                controller: passwordCtrl,
+                obscureText: isObscured,
+                style: const TextStyle(color: AppColors.text),
+                decoration: InputDecoration(
+                  hintText: 'Vault Password (min 6 chars)',
+                  filled: true,
+                  fillColor: AppColors.surface2,
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
+                  suffixIcon: IconButton(
+                    icon: Icon(isObscured ? Icons.visibility_outlined : Icons.visibility_off_outlined, color: AppColors.text3, size: 18),
+                    onPressed: () => setDialogState(() => isObscured = !isObscured),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('Cancel', style: TextStyle(color: AppColors.text3)),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.income,
+                foregroundColor: AppColors.background,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+              onPressed: () async {
+                final pw = passwordCtrl.text.trim();
+                if (pw.length < 6) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Password must be at least 6 characters')),
+                  );
+                  return;
+                }
+                Navigator.of(ctx).pop();
+                try {
+                  final exportService = await ref.read(backupExportServiceProvider.future);
+                  await exportService.createEncryptedBackupFile(password: pw);
+                } catch (e) {
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Failed to create backup: $e')),
+                    );
+                  }
+                }
+              },
+              child: const Text('Create & Share', style: TextStyle(fontWeight: FontWeight.w700)),
+            ),
           ],
         ),
       ),

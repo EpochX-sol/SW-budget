@@ -18,11 +18,11 @@ class MoreScreen extends ConsumerWidget {
     final accountsAsync = ref.watch(accountsStreamProvider);
 
     final user = authState.userProfile;
-    final displayName = user?['display_name'] as String? ?? 'Samuel';
-    final email = user?['email'] as String? ?? 'samuel@swbudget.local';
+    final displayName = user?['display_name'] as String? ?? (authState.status == AuthStatus.authenticated ? 'User' : 'Guest');
+    final email = user?['email'] as String? ?? (authState.status == AuthStatus.authenticated ? 'Offline Ledger' : 'Not signed in');
 
     final reviewCount = reviewCountAsync.value ?? 0;
-    final accountsCount = accountsAsync.value?.length ?? 3;
+    final accountsCount = accountsAsync.value?.length ?? 0;
 
     return Scaffold(
       backgroundColor: AppColors.background,
