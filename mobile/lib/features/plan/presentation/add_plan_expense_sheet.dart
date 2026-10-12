@@ -1,11 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:intl/intl.dart';
 import 'package:uuid/uuid.dart';
 import '../../../core/theme/app_colors.dart';
+import '../../../data/local/app_database.dart';
 import '../../../data/local/database_provider.dart';
 import '../../../domain/use_cases/plan_evaluation_engine.dart';
-import '../plan_providers.dart';
 
 class AddPlanExpenseSheet extends ConsumerStatefulWidget {
   final PlanEvaluationSnapshot snapshot;

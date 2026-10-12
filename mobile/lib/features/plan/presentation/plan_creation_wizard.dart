@@ -569,6 +569,32 @@ class _PlanCreationWizardState extends ConsumerState<PlanCreationWizard> {
                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
                 ),
               ),
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppColors.text,
+                  side: const BorderSide(color: AppColors.line2),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  minimumSize: const Size(double.infinity, 44),
+                ),
+                icon: const Icon(Icons.calendar_today, size: 16, color: AppColors.accent),
+                label: Text(
+                  pickedDate == null ? 'Optional Due Date (Not Set)' : 'Due: ${DateFormat('yyyy-MM-dd').format(pickedDate!)}',
+                  style: const TextStyle(fontSize: 13),
+                ),
+                onPressed: () async {
+                  final now = DateTime.now();
+                  final d = await showDatePicker(
+                    context: ctx,
+                    initialDate: pickedDate ?? now,
+                    firstDate: now.subtract(const Duration(days: 30)),
+                    lastDate: now.add(const Duration(days: 365)),
+                  );
+                  if (d != null) {
+                    setSheetState(() => pickedDate = d);
+                  }
+                },
+              ),
               const SizedBox(height: 16),
               ElevatedButton(
                 style: ElevatedButton.styleFrom(

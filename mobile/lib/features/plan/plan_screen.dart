@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
@@ -728,8 +727,11 @@ class _PlanScreenState extends ConsumerState<PlanScreen> {
                 SizedBox(
                   height: 140,
                   child: PaceChart(
-                    dailySpends: snapshot.weeklyChunks.map((w) => w.spent).toList(),
-                    totalBudget: snapshot.spendableBudget,
+                    totalDays: snapshot.totalDays,
+                    currentDay: snapshot.daysElapsed,
+                    budget: snapshot.spendableBudget,
+                    spentByDay: snapshot.weeklyChunks.map((w) => w.spent).toList(),
+                    height: 140,
                   ),
                 ),
               ],

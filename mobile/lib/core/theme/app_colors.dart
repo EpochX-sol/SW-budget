@@ -41,12 +41,14 @@ abstract class AppColors {
 
   // Financial Semantics
   static const Color income = Color(0xFF34D399); // --in:#34D399 (Mint)
+  static const Color positive = income;
   static const Color incomeLight = Color(0xFF34D399);
   static const Color inBg = Color(0x2134D399); // rgba(52,211,153,.13)
   static const Color incomeBg = Color(0x2134D399);
   static const Color incomeSurface = Color(0x2134D399);
 
   static const Color expense = Color(0xFFFB7185); // --out:#FB7185 (Rose/Coral)
+  static const Color negative = expense;
   static const Color expenseLight = Color(0xFFFB7185);
   static const Color outBg = Color(0x21FB7185); // rgba(251,113,133,.13)
   static const Color expenseBg = Color(0x21FB7185);

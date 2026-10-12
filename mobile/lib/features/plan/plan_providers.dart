@@ -169,7 +169,6 @@ final cycleWeeksSpendProvider = StreamProvider<List<Map<String, dynamic>>>((ref)
     return;
   }
 
-  final db = await ref.watch(databaseProvider.future);
   final now = DateTime.now();
   final daysInMonth = DateTime(now.year, now.month + 1, 0).day;
   final monthName = DateFormat('MMM').format(now);
@@ -192,8 +191,10 @@ final safeToSpendProvider = Provider<SafeToSpendSummary>((ref) {
     return SafeToSpendSummary(
       totalBudget: snapshot.spendableBudget,
       spentSoFar: snapshot.totalSpent,
+      remainingBudget: snapshot.leftToSpend,
       safeToday: snapshot.todayAllowance,
       daysElapsed: snapshot.daysElapsed,
+      daysRemaining: snapshot.daysRemaining,
       totalDaysInPeriod: snapshot.totalDays,
       burnRatio: snapshot.spendableBudget > 0 ? snapshot.totalSpent / snapshot.spendableBudget : 1.0,
       pace: pace,
