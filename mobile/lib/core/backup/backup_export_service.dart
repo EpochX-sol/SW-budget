@@ -23,9 +23,29 @@ class BackupExportService {
   })  : _database = database,
         _apiClient = apiClient;
 
-  /// Generates a local CSV/Excel export of transactions and triggers system share sheet
+  /// Generates a local CSV or server-rendered Excel export of transactions and triggers system share sheet
   Future<String> exportTransactionsCsv({String period = 'cycle', String format = 'csv'}) async {
     final now = DateTime.now();
+
+    if (format == 'xlsx') {
+      try {
+        final bytes = await _apiClient.downloadExcelExport();
+        if (bytes.isNotEmpty) {
+          final tempDir = await getTemporaryDirectory();
+          final fileName = 'sw_budget_report_${period}_${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}.xlsx';
+          final file = File(p.join(tempDir.path, fileName));
+          await file.writeAsBytes(bytes);
+
+          await Share.shareXFiles(
+            [XFile(file.path)],
+            subject: 'SW-budget Multi-Sheet Excel Ledger ($period)',
+          );
+          return file.path;
+        }
+      } catch (_) {
+        // Fall back seamlessly to on-device CSV if server is unreachable
+      }
+    }
     DateTime? cutoff;
     if (period == 'cycle') {
       cutoff = DateTime(now.year, now.month, 1);

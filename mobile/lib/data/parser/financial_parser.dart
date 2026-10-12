@@ -45,6 +45,12 @@ class FinancialParser {
     _sortTemplates();
   }
 
+  /// Updates templates dynamically from a signed remote TemplateBundle
+  void updateTemplateBundle(TemplateBundle bundle) {
+    _templates = List.from(bundle.templates);
+    _sortTemplates();
+  }
+
   void _sortTemplates() {
     _templates.sort((a, b) => b.priority.compareTo(a.priority));
   }

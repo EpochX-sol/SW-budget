@@ -9,6 +9,9 @@ import '../../core/backup/backup_export_service.dart';
 import '../../core/widgets/sheets/export_statement_sheet.dart';
 import '../../data/sync/sync_provider.dart';
 
+import '../../data/remote/api_client_provider.dart';
+import '../../core/notifications/local_notification_service.dart';
+
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
 
@@ -20,6 +23,42 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   bool _biometricEnabled = true;
   bool _simulateOffline = false;
   bool _simulateFailedSync = false;
+  bool _notificationsEnabled = true;
+  bool _showAmountsOnLock = false;
+  bool _quietHoursEnabled = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadNotificationPreferences();
+  }
+
+  Future<void> _loadNotificationPreferences() async {
+    try {
+      final client = ref.read(apiClientProvider);
+      final prefs = await client.getNotificationPreferences();
+      if (mounted) {
+        setState(() {
+          _notificationsEnabled = prefs['enabled'] == true;
+          _showAmountsOnLock = prefs['show_amounts'] == true;
+        });
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _syncNotificationPrefs({bool? enabled, bool? showAmounts}) async {
+    try {
+      final notifService = ref.read(localNotificationServiceProvider);
+      if (showAmounts != null) {
+        notifService.showAmountsOnLockScreen = showAmounts;
+      }
+      final client = ref.read(apiClientProvider);
+      await client.updateNotificationPreferences(
+        enabled: enabled ?? _notificationsEnabled,
+        showAmounts: showAmounts ?? _showAmountsOnLock,
+      );
+    } catch (_) {}
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -182,7 +221,54 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             ),
             const SizedBox(height: 18),
 
-            // 3. Sync & Cloud Gateway
+            // 3. Notifications & Cloud Alerts
+            const Text(
+              'NOTIFICATIONS & CLOUD ALERTS',
+              style: TextStyle(
+                color: AppColors.text3,
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 1.1,
+              ),
+            ),
+            const SizedBox(height: 10),
+            Container(
+              decoration: BoxDecoration(
+                color: AppColors.surface,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: AppColors.line),
+              ),
+              child: Column(
+                children: [
+                  SwitchListTile(
+                    activeColor: AppColors.accent,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
+                    title: const Text('Instant Spending Alerts', style: TextStyle(color: AppColors.text, fontSize: 13, fontWeight: FontWeight.w600)),
+                    subtitle: const Text('On-device instant alerts when approaching 80% & 100% budget', style: TextStyle(color: AppColors.text3, fontSize: 11)),
+                    value: _notificationsEnabled,
+                    onChanged: (val) {
+                      setState(() => _notificationsEnabled = val);
+                      _syncNotificationPrefs(enabled: val);
+                    },
+                  ),
+                  const Divider(color: AppColors.line, height: 1),
+                  SwitchListTile(
+                    activeColor: AppColors.accent,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
+                    title: const Text('Show Amounts in Notifications', style: TextStyle(color: AppColors.text, fontSize: 13, fontWeight: FontWeight.w600)),
+                    subtitle: const Text('Display exact ETB balances in push banners', style: TextStyle(color: AppColors.text3, fontSize: 11)),
+                    value: _showAmountsOnLock,
+                    onChanged: (val) {
+                      setState(() => _showAmountsOnLock = val);
+                      _syncNotificationPrefs(showAmounts: val);
+                    },
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 18),
+
+            // 4. Sync & Cloud Gateway
             const Text(
               'SYNC & CLOUD GATEWAY',
               style: TextStyle(

@@ -2,6 +2,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../local/database_provider.dart';
 import '../parser/financial_parser.dart';
+import '../parser/models/template_bundle.dart';
+import '../remote/api_client_provider.dart';
 import 'ingestion_pipeline.dart';
 import 'sources/sms_transaction_source.dart';
 import 'sources/notification_listener_source.dart';
@@ -33,6 +35,19 @@ final financialParserProvider = FutureProvider<FinancialParser>((ref) async {
   } catch (_) {
     // Graceful fallback if full named patterns cannot be loaded
   }
+
+  // Attempt Over-The-Air signed template update from backend
+  try {
+    final apiClient = ref.watch(apiClientProvider);
+    final remoteBundleData = await apiClient.getSmsTemplates();
+    final bundle = TemplateBundle.fromJson(remoteBundleData);
+    if (bundle.templates.isNotEmpty) {
+      parser.updateTemplateBundle(bundle);
+    }
+  } catch (_) {
+    // Offline or unreachable: built-in asset regex patterns maintain 100% operation
+  }
+
   return parser;
 });
 

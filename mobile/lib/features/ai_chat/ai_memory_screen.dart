@@ -5,6 +5,8 @@ import '../../core/theme/app_typography.dart';
 import '../../domain/entities/ai_models.dart';
 import 'ai_chat_providers.dart';
 
+import '../../data/remote/api_client_provider.dart';
+
 class AiMemoryScreen extends ConsumerStatefulWidget {
   const AiMemoryScreen({super.key});
 
@@ -14,6 +16,117 @@ class AiMemoryScreen extends ConsumerStatefulWidget {
 
 class _AiMemoryScreenState extends ConsumerState<AiMemoryScreen> {
   String _selectedKind = 'ALL';
+
+  void _showAddMemorySheet(BuildContext context) {
+    String kind = 'preference';
+    final controller = TextEditingController();
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: AppColors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (ctx, setSheetState) => Padding(
+          padding: EdgeInsets.only(
+            left: 20,
+            right: 20,
+            top: 16,
+            bottom: MediaQuery.of(ctx).viewInsets.bottom + 24,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Center(
+                child: Container(
+                  width: 36,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: AppColors.border,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Text('Teach AI a Preference / Rule', style: AppTypography.titleMedium),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  _FilterChip(
+                    label: 'Preference',
+                    isSelected: kind == 'preference',
+                    onTap: () => setSheetState(() => kind = 'preference'),
+                  ),
+                  const SizedBox(width: 8),
+                  _FilterChip(
+                    label: 'Goal',
+                    isSelected: kind == 'goal',
+                    onTap: () => setSheetState(() => kind = 'goal'),
+                  ),
+                  const SizedBox(width: 8),
+                  _FilterChip(
+                    label: 'Habit',
+                    isSelected: kind == 'habit',
+                    onTap: () => setSheetState(() => kind = 'habit'),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              TextField(
+                controller: controller,
+                maxLines: 3,
+                style: AppTypography.bodyMedium,
+                decoration: InputDecoration(
+                  hintText: 'e.g. Keep dining out under 3,000 ETB per week',
+                  hintStyle: AppTypography.bodyMedium.copyWith(color: AppColors.textMuted),
+                  filled: true,
+                  fillColor: AppColors.surfaceElevated,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(color: AppColors.border),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 18),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                ),
+                onPressed: () async {
+                  final text = controller.text.trim();
+                  if (text.isEmpty) return;
+                  Navigator.pop(sheetContext);
+                  try {
+                    final client = ref.read(apiClientProvider);
+                    await client.addAiMemory(kind: kind, content: text);
+                    ref.invalidate(aiMemoriesProvider);
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Financial rule taught to AI model.')),
+                      );
+                    }
+                  } catch (e) {
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Failed to save memory: $e')),
+                      );
+                    }
+                  }
+                },
+                child: const Text('Save to Model Memory', style: TextStyle(fontWeight: FontWeight.bold)),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -29,6 +142,13 @@ class _AiMemoryScreenState extends ConsumerState<AiMemoryScreen> {
           icon: const Icon(Icons.arrow_back_ios_new_rounded, color: AppColors.textPrimary),
           onPressed: () => Navigator.of(context).pop(),
         ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.add_circle_outline_rounded, color: AppColors.primaryLight),
+            tooltip: 'Add Rule',
+            onPressed: () => _showAddMemorySheet(context),
+          ),
+        ],
       ),
       body: SafeArea(
         child: Column(
@@ -123,10 +243,23 @@ class _AiMemoryScreenState extends ConsumerState<AiMemoryScreen> {
                       final mem = filtered[index];
                       return _MemoryCard(
                         memory: mem,
-                        onDelete: () {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('Memory removed from AI model context.')),
-                          );
+                        onDelete: () async {
+                          try {
+                            final client = ref.read(apiClientProvider);
+                            await client.deleteAiMemory(mem.id);
+                            ref.invalidate(aiMemoriesProvider);
+                            if (context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text('Memory removed from AI model context.')),
+                              );
+                            }
+                          } catch (e) {
+                            if (context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text('Failed to delete memory: $e')),
+                              );
+                            }
+                          }
                         },
                       );
                     },

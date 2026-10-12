@@ -131,3 +131,8 @@ class LocalNotificationService {
     }
   }
 }
+
+final localNotificationServiceProvider = Provider<LocalNotificationService>((ref) {
+  return LocalNotificationService();
+});
+

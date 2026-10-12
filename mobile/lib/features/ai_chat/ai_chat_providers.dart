@@ -244,6 +244,20 @@ final aiChatProvider = StateNotifierProvider<AiChatNotifier, ChatState>((ref) {
 final aiMemoriesProvider = FutureProvider<List<AiMemoryItem>>((ref) async {
   final client = ref.watch(apiClientProvider);
   try {
+    final list = await client.getAiMemories();
+    if (list.isNotEmpty) {
+      return list.map((m) {
+        final map = m as Map<String, dynamic>;
+        return AiMemoryItem(
+          id: (map['id'] ?? '') as String,
+          kind: (map['kind'] ?? 'preference') as String,
+          content: (map['content'] ?? '') as String,
+          importance: (map['importance'] as num?)?.toInt() ?? 3,
+          pinned: map['pinned'] == true || map['pinned'] == 1,
+          createdAt: DateTime.tryParse(map['created_at'] as String? ?? '') ?? DateTime.now(),
+        );
+      }).toList();
+    }
     final res = await client.getMe();
     final rawMemories = (res['memories'] as List<dynamic>?) ?? [];
     return rawMemories.map((m) {
@@ -261,3 +275,13 @@ final aiMemoriesProvider = FutureProvider<List<AiMemoryItem>>((ref) async {
     return [];
   }
 });
+
+final aiUsageProvider = FutureProvider<Map<String, dynamic>>((ref) async {
+  final client = ref.watch(apiClientProvider);
+  try {
+    return await client.getAiUsage();
+  } catch (_) {
+    return {'tokens_used': 0, 'tokens_allowed': 50000, 'percent': 0};
+  }
+});
+

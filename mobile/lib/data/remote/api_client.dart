@@ -400,4 +400,169 @@ class ApiClient {
       throw ApiException.fromDioException(e);
     }
   }
+
+  // --- OVER-THE-AIR (OTA) TEMPLATES ---
+
+  Future<Map<String, dynamic>?> fetchOtaPatterns({String? ifNoneMatch}) async {
+    try {
+      final options = Options(
+        headers: ifNoneMatch != null ? {'If-None-Match': ifNoneMatch} : null,
+        validateStatus: (status) => status != null && (status == 200 || status == 304),
+      );
+      final response = await _dio.get(ApiEndpoints.templatesPatterns, options: options);
+      if (response.statusCode == 304) {
+        return null;
+      }
+      final etag = response.headers.value('etag');
+      return {
+        'etag': etag,
+        'payload': response.data,
+      };
+    } on DioException catch (e) {
+      throw ApiException.fromDioException(e);
+    }
+  }
+
+  // --- SERVER EXPORT & BACKUP ---
+
+  Future<List<int>> downloadExcelExport() async {
+    try {
+      final jobRes = await _dio.post(ApiEndpoints.exportJobs);
+      final data = jobRes.data as Map<String, dynamic>;
+      final jobId = data['job_id'] as String;
+
+      final downloadRes = await _dio.get<List<int>>(
+        ApiEndpoints.exportJobDownload(jobId),
+        options: Options(responseType: ResponseType.bytes),
+      );
+      return downloadRes.data ?? [];
+    } on DioException catch (e) {
+      throw ApiException.fromDioException(e);
+    }
+  }
+
+  // --- NOTIFICATION PREFERENCES & CLOUD ALERTS ---
+
+  Future<Map<String, dynamic>> getNotificationPreferences() async {
+    try {
+      final response = await _dio.get(ApiEndpoints.notificationPreferences);
+      return response.data as Map<String, dynamic>;
+    } on DioException catch (e) {
+      throw ApiException.fromDioException(e);
+    }
+  }
+
+  Future<Map<String, dynamic>> updateNotificationPreferences({
+    bool? enabled,
+    String? quietStart,
+    String? quietEnd,
+    bool? showAmounts,
+    int? dailyCap,
+  }) async {
+    try {
+      final response = await _dio.put(
+        ApiEndpoints.notificationPreferences,
+        data: {
+          if (enabled != null) 'enabled': enabled,
+          if (quietStart != null) 'quiet_start': quietStart,
+          if (quietEnd != null) 'quiet_end': quietEnd,
+          if (showAmounts != null) 'show_amounts': showAmounts,
+          if (dailyCap != null) 'daily_cap': dailyCap,
+        },
+      );
+      return response.data as Map<String, dynamic>;
+    } on DioException catch (e) {
+      throw ApiException.fromDioException(e);
+    }
+  }
+
+  Future<List<dynamic>> getNotifications() async {
+    try {
+      final response = await _dio.get(ApiEndpoints.notifications);
+      return response.data as List<dynamic>;
+    } on DioException catch (e) {
+      throw ApiException.fromDioException(e);
+    }
+  }
+
+  // --- AI VECTOR MEMORIES & QUOTA USAGE ---
+
+  Future<List<dynamic>> getAiMemories() async {
+    try {
+      final response = await _dio.get(ApiEndpoints.aiMemories);
+      final data = response.data as Map<String, dynamic>;
+      return (data['memories'] as List<dynamic>?) ?? [];
+    } on DioException catch (e) {
+      throw ApiException.fromDioException(e);
+    }
+  }
+
+  Future<Map<String, dynamic>> addAiMemory({
+    required String kind,
+    required String content,
+    int importance = 3,
+    bool pinned = false,
+  }) async {
+    try {
+      final response = await _dio.post(
+        ApiEndpoints.aiMemories,
+        data: {
+          'kind': kind,
+          'content': content,
+          'importance': importance,
+          'pinned': pinned,
+        },
+      );
+      return response.data as Map<String, dynamic>;
+    } on DioException catch (e) {
+      throw ApiException.fromDioException(e);
+    }
+  }
+
+  Future<void> deleteAiMemory(String id) async {
+    try {
+      await _dio.delete(ApiEndpoints.aiMemoryById(id));
+    } on DioException catch (e) {
+      throw ApiException.fromDioException(e);
+    }
+  }
+
+  Future<Map<String, dynamic>> getAiUsage() async {
+    try {
+      final response = await _dio.get(ApiEndpoints.aiUsage);
+      return response.data as Map<String, dynamic>;
+    } on DioException catch (e) {
+      throw ApiException.fromDioException(e);
+    }
+  }
+
+  // --- SPENDING PLAN SIMULATION ---
+
+  Future<Map<String, dynamic>> simulatePlanSpend({
+    required String planId,
+    required double simulatedDailySpend,
+  }) async {
+    try {
+      final response = await _dio.post(
+        ApiEndpoints.planSimulate(planId),
+        data: {'simulated_daily_spend': simulatedDailySpend},
+      );
+      return response.data as Map<String, dynamic>;
+    } on DioException catch (e) {
+      throw ApiException.fromDioException(e);
+    }
+  }
+
+  Future<Map<String, dynamic>?> getActivePlan() async {
+    try {
+      final response = await _dio.get(
+        ApiEndpoints.activePlan,
+        options: Options(validateStatus: (status) => status != null && (status == 200 || status == 404)),
+      );
+      if (response.statusCode == 404) return null;
+      return response.data as Map<String, dynamic>?;
+    } on DioException catch (e) {
+      throw ApiException.fromDioException(e);
+    }
+  }
 }

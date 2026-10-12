@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../domain/use_cases/adaptive_spending_engine.dart';
+import '../../../data/remote/api_client_provider.dart';
 
-class PlanSimulatorScreen extends StatefulWidget {
+class PlanSimulatorScreen extends ConsumerStatefulWidget {
   final double flexibleBudget;
   final int totalDays;
   final int currentDay;
   final double spentTotal;
+  final String? planId;
 
   const PlanSimulatorScreen({
     super.key,
@@ -13,14 +16,16 @@ class PlanSimulatorScreen extends StatefulWidget {
     required this.totalDays,
     required this.currentDay,
     required this.spentTotal,
+    this.planId,
   });
 
   @override
-  State<PlanSimulatorScreen> createState() => _PlanSimulatorScreenState();
+  ConsumerState<PlanSimulatorScreen> createState() => _PlanSimulatorScreenState();
 }
 
-class _PlanSimulatorScreenState extends State<PlanSimulatorScreen> {
+class _PlanSimulatorScreenState extends ConsumerState<PlanSimulatorScreen> {
   late double _proposedDailySpend;
+  bool _serverSynced = false;
 
   @override
   void initState() {
@@ -30,6 +35,19 @@ class _PlanSimulatorScreenState extends State<PlanSimulatorScreen> {
     _proposedDailySpend = (remainingDays > 0 && remainingBudget > 0)
         ? (remainingBudget / remainingDays).roundToDouble()
         : 500.0;
+    _verifyServerSimulation();
+  }
+
+  Future<void> _verifyServerSimulation() async {
+    if (widget.planId == null) return;
+    try {
+      final client = ref.read(apiClientProvider);
+      await client.simulatePlanSpend(
+        planId: widget.planId!,
+        simulatedDailySpend: _proposedDailySpend,
+      );
+      if (mounted) setState(() => _serverSynced = true);
+    } catch (_) {}
   }
 
   Color _getStatusColor(String status) {
@@ -102,6 +120,7 @@ class _PlanSimulatorScreenState extends State<PlanSimulatorScreen> {
                       setState(() {
                         _proposedDailySpend = val;
                       });
+                      _verifyServerSimulation();
                     },
                   ),
                 ],

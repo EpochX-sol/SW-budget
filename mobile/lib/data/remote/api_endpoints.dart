@@ -44,6 +44,7 @@ class ApiEndpoints {
 
   // Signed SMS Parser Templates
   static const String smsTemplates = '/v1/sms-templates';
+  static const String templatesPatterns = '/v1/templates/patterns';
 
   // AI Financial Coach
   static const String aiThreads = '/v1/ai/threads';
@@ -51,10 +52,28 @@ class ApiEndpoints {
   static const String aiProposals = '/v1/ai/proposals';
   static String aiProposalDecision(String id) => '/v1/ai/proposals/$id/decision';
   static const String aiMemories = '/v1/ai/memories';
+  static String aiMemoryById(String id) => '/v1/ai/memories/$id';
   static const String aiUsage = '/v1/ai/usage';
 
   // Analytics & Forecasts
   static const String analyticsForecast = '/v1/analytics/forecast';
   static const String analyticsTrends = '/v1/analytics/trends';
   static const String analyticsFees = '/v1/analytics/fees';
+
+  // Export & Cloud Backups
+  static const String exportJobs = '/v1/export/jobs';
+  static String exportJobById(String id) => '/v1/export/jobs/$id';
+  static String exportJobDownload(String id) => '/v1/export/jobs/$id/download';
+  static const String backup = '/v1/backup';
+  static const String backupRestore = '/v1/backup/restore';
+
+  // Notifications & Preferences
+  static const String notifications = '/v1/notifications';
+  static String notificationMarkRead(String id) => '/v1/notifications/$id/read';
+  static const String notificationPreferences = '/v1/notifications/preferences';
+
+  // Spending Plans & Simulation
+  static const String plans = '/v1/plans';
+  static const String activePlan = '/v1/plans/active';
+  static String planSimulate(String id) => '/v1/plans/$id/simulate';
 }

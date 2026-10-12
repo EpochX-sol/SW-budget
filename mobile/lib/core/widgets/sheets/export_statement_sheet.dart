@@ -111,14 +111,20 @@ class _ExportStatementSheetState extends State<ExportStatementSheet> {
             child: Row(
               children: [
                 Expanded(
-                  child: _segButton('PDF · for banks & embassies', _format == 'pdf', () {
-                    setState(() => _format = 'pdf');
+                  child: _segButton('CSV · ledger', _format == 'csv', () {
+                    setState(() => _format = 'csv');
                   }),
                 ),
                 const SizedBox(width: 4),
                 Expanded(
-                  child: _segButton('CSV · spreadsheet', _format == 'csv', () {
-                    setState(() => _format = 'csv');
+                  child: _segButton('XLSX · full report', _format == 'xlsx', () {
+                    setState(() => _format = 'xlsx');
+                  }),
+                ),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: _segButton('PDF · bank doc', _format == 'pdf', () {
+                    setState(() => _format = 'pdf');
                   }),
                 ),
               ],
