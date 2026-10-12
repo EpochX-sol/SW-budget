@@ -565,4 +565,33 @@ class ApiClient {
       throw ApiException.fromDioException(e);
     }
   }
+
+  // --- ANALYTICS ---
+
+  Future<Map<String, dynamic>> getAnalyticsForecast() async {
+    try {
+      final response = await _dio.get(ApiEndpoints.analyticsForecast);
+      return response.data as Map<String, dynamic>;
+    } on DioException catch (e) {
+      throw ApiException.fromDioException(e);
+    }
+  }
+
+  Future<Map<String, dynamic>> getAnalyticsTrends() async {
+    try {
+      final response = await _dio.get(ApiEndpoints.analyticsTrends);
+      return response.data as Map<String, dynamic>;
+    } on DioException catch (e) {
+      throw ApiException.fromDioException(e);
+    }
+  }
+
+  Future<Map<String, dynamic>> getAnalyticsFees() async {
+    try {
+      final response = await _dio.get(ApiEndpoints.analyticsFees);
+      return response.data as Map<String, dynamic>;
+    } on DioException catch (e) {
+      throw ApiException.fromDioException(e);
+    }
+  }
 }

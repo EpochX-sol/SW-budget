@@ -1,106 +1,25 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:intl/intl.dart';
 
 import '../../core/security/privacy_provider.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/widgets/charts/category_donut_chart.dart';
 import '../../core/widgets/charts/flow_bar_chart.dart';
 import '../activity/activity_providers.dart';
+import 'insights_providers.dart';
 
-class InsightsScreen extends ConsumerStatefulWidget {
+class InsightsScreen extends ConsumerWidget {
   const InsightsScreen({super.key});
 
-  @override
-  ConsumerState<InsightsScreen> createState() => _InsightsScreenState();
-}
-
-class _InsightsScreenState extends ConsumerState<InsightsScreen> {
-  String _activePeriod = '30D';
   static const _periods = ['7D', '30D', 'MOM', 'YTD'];
 
   @override
-  Widget build(BuildContext context) {
-    final transactionsAsync = ref.watch(transactionsProvider);
+  Widget build(BuildContext context, WidgetRef ref) {
+    final activePeriod = ref.watch(insightsPeriodProvider);
+    final summary = ref.watch(insightsSummaryProvider);
     final isPrivate = ref.watch(privacyModeProvider);
-    final transactions = transactionsAsync.value ?? [];
-
-    final now = DateTime.now();
-    DateTime cutoff;
-    if (_activePeriod == '7D') {
-      cutoff = now.subtract(const Duration(days: 7));
-    } else if (_activePeriod == '30D') {
-      cutoff = now.subtract(const Duration(days: 30));
-    } else if (_activePeriod == 'MOM') {
-      cutoff = DateTime(now.year, now.month, 1);
-    } else {
-      cutoff = DateTime(now.year, 1, 1);
-    }
-
-    final periodTransactions = transactions.where((tx) {
-      final dt = DateTime.tryParse(tx['occurred_at'] as String? ?? '');
-      return dt != null && dt.isAfter(cutoff);
-    }).toList();
-
-    final txList = periodTransactions.isNotEmpty ? periodTransactions : transactions;
-
-    // Calculate inflow, outflow, net savings
-    double inflow = 0.0;
-    double outflow = 0.0;
-    final Map<String, double> categorySpend = {};
-    final Map<String, List<double>> merchantSpend = {};
-
-    for (final tx in txList) {
-      final type = (tx['type'] as String? ?? '').toLowerCase();
-      final amt = (tx['amount'] as num?)?.toDouble() ?? 0.0;
-      if (type == 'credit' || type == 'income') {
-        inflow += amt;
-      } else if (type == 'debit' || type == 'expense') {
-        outflow += amt;
-        final cat = tx['category_id'] as String? ?? 'General Expense';
-        categorySpend[cat] = (categorySpend[cat] ?? 0.0) + amt;
-
-        final party = (tx['counterparty'] as String? ?? '').trim();
-        if (party.isNotEmpty) {
-          merchantSpend.putIfAbsent(party, () => [0.0, 0.0]);
-          merchantSpend[party]![0] += amt;
-          merchantSpend[party]![1] += 1;
-        }
-      }
-    }
-
-    // Prototype defaults if no transactions in DB
-    if (transactions.isEmpty) {
-      inflow = 45000.00;
-      outflow = 18095.39;
-    }
-
-    final netSavings = inflow - outflow;
-    final savingsRate = inflow > 0 ? ((netSavings / inflow) * 100).clamp(0, 100).toInt() : 0;
-
-    // Category donut segments
-    final palette = [AppColors.accent, AppColors.income, AppColors.amber, AppColors.expense, AppColors.text2];
-    int colorIdx = 0;
-    final List<DonutSegment> donutSegments = [];
-    categorySpend.forEach((cat, amt) {
-      donutSegments.add(DonutSegment(
-        label: cat,
-        value: amt,
-        color: palette[colorIdx % palette.length],
-      ));
-      colorIdx++;
-    });
-
-    // Top merchants
-    final sortedMerchants = merchantSpend.entries.toList()
-      ..sort((a, b) => b.value[0].compareTo(a.value[0]));
-    final topMerchants = sortedMerchants.take(5).toList().asMap().entries.map((entry) {
-      final rank = (entry.key + 1).toString();
-      final name = entry.value.key;
-      final volume = entry.value.value[0];
-      final count = entry.value.value[1].toInt();
-      return {'rank': rank, 'name': name, 'volume': volume, 'count': count};
-    }).toList();
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -110,6 +29,10 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen> {
           backgroundColor: AppColors.surface,
           onRefresh: () async {
             ref.invalidate(transactionsProvider);
+            ref.invalidate(insightsCategoriesStreamProvider);
+            ref.invalidate(remoteAnalyticsTrendsProvider);
+            ref.invalidate(remoteAnalyticsFeesProvider);
+            ref.invalidate(remoteAnalyticsForecastProvider);
           },
           child: ListView(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -166,13 +89,11 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen> {
                 padding: const EdgeInsets.all(4),
                 child: Row(
                   children: _periods.map((p) {
-                    final isSelected = _activePeriod == p;
+                    final isSelected = activePeriod == p;
                     return Expanded(
                       child: GestureDetector(
                         onTap: () {
-                          setState(() {
-                            _activePeriod = p;
-                          });
+                          ref.read(insightsPeriodProvider.notifier).state = p;
                         },
                         child: Container(
                           padding: const EdgeInsets.symmetric(vertical: 8),
@@ -181,7 +102,7 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen> {
                             color: isSelected ? AppColors.accentBg : Colors.transparent,
                             borderRadius: BorderRadius.circular(10),
                             border: Border.all(
-                              color: isSelected ? AppColors.accent.withOpacity(0.5) : Colors.transparent,
+                              color: isSelected ? AppColors.accent.withValues(alpha: 0.5) : Colors.transparent,
                             ),
                           ),
                           child: Text(
@@ -206,7 +127,7 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen> {
                   Expanded(
                     child: _buildMetricCard(
                       label: 'Inflow',
-                      value: '+${formatCurrency(inflow, isPrivate: isPrivate)}',
+                      value: '+${formatCurrency(summary.inflow, isPrivate: isPrivate)}',
                       valueColor: AppColors.income,
                     ),
                   ),
@@ -214,7 +135,7 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen> {
                   Expanded(
                     child: _buildMetricCard(
                       label: 'Outflow',
-                      value: '-${formatCurrency(outflow, isPrivate: isPrivate)}',
+                      value: '-${formatCurrency(summary.outflow, isPrivate: isPrivate)}',
                       valueColor: AppColors.expense,
                     ),
                   ),
@@ -226,15 +147,15 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen> {
                   Expanded(
                     child: _buildMetricCard(
                       label: 'Net Savings',
-                      value: formatCurrency(netSavings, isPrivate: isPrivate),
-                      valueColor: netSavings >= 0 ? AppColors.income : AppColors.expense,
+                      value: formatCurrency(summary.netSavings, isPrivate: isPrivate),
+                      valueColor: summary.netSavings >= 0 ? AppColors.income : AppColors.expense,
                     ),
                   ),
                   const SizedBox(width: 10),
                   Expanded(
                     child: _buildMetricCard(
                       label: 'Savings Rate',
-                      value: '$savingsRate%',
+                      value: '${summary.savingsRate}%',
                       valueColor: AppColors.accent,
                     ),
                   ),
@@ -243,17 +164,39 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen> {
               const SizedBox(height: 18),
 
               // 4. Cash Flow Chart Section
-              const Text(
-                'CASH FLOW (INFLOW VS OUTFLOW)',
-                style: TextStyle(
-                  color: AppColors.text3,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 1.1,
-                ),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text(
+                    'CASH FLOW (INFLOW VS OUTFLOW)',
+                    style: TextStyle(
+                      color: AppColors.text3,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 1.1,
+                    ),
+                  ),
+                  Text(
+                    '${DateFormat('MMM d').format(summary.startDate)} - ${DateFormat('MMM d').format(summary.endDate)}',
+                    style: const TextStyle(color: AppColors.text3, fontSize: 10),
+                  ),
+                ],
               ),
               const SizedBox(height: 10),
-              const FlowBarChart(),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
+                decoration: BoxDecoration(
+                  color: AppColors.surface,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: AppColors.line),
+                ),
+                child: FlowBarChart(
+                  inflows: summary.chartInflows,
+                  outflows: summary.chartOutflows,
+                  labels: summary.chartLabels,
+                  height: 150,
+                ),
+              ),
               const SizedBox(height: 18),
 
               // 5. Where It Went (Donut Chart & Legend)
@@ -267,29 +210,15 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen> {
                 ),
               ),
               const SizedBox(height: 10),
-              CategoryDonutChart(
-                segments: donutSegments.isNotEmpty
-                    ? donutSegments
-                    : const [
-                        DonutSegment(label: 'Food & Dining', value: 6050.0, color: AppColors.accent),
-                        DonutSegment(label: 'Rent & Utilities', value: 4500.0, color: AppColors.income),
-                        DonutSegment(label: 'Transport & Fuel', value: 3200.0, color: AppColors.amber),
-                        DonutSegment(label: 'Shopping & Leisure', value: 4345.39, color: AppColors.expense),
-                      ],
-                totalSpent: outflow,
-                isMasked: isPrivate,
-              ),
+              _buildCategoryBreakdownSection(summary: summary, isPrivate: isPrivate),
               const SizedBox(height: 18),
 
               // 6. Top Merchants Ranked List
-              _buildTopMerchantsSection(
-                merchants: topMerchants,
-                isPrivate: isPrivate,
-              ),
+              _buildTopMerchantsSection(summary: summary, isPrivate: isPrivate),
               const SizedBox(height: 18),
 
-              // 7. Proactive Coach Insights
-              _buildCoachInsightsSection(context),
+              // 7. Dynamic Financial Observations
+              _buildCoachInsightsSection(context, summary: summary),
               const SizedBox(height: 24),
             ],
           ),
@@ -331,18 +260,98 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen> {
     );
   }
 
-  Widget _buildTopMerchantsSection({
-    required List<Map<String, dynamic>> merchants,
+  Widget _buildCategoryBreakdownSection({
+    required dynamic summary,
     required bool isPrivate,
   }) {
-    final effectiveMerchants = merchants.isNotEmpty
-        ? merchants
-        : [
-            {'rank': '1', 'name': 'Fresh Corner Supermarket', 'volume': 3450.0, 'count': 8},
-            {'rank': '2', 'name': 'TotalEnergies Bole', 'volume': 2400.0, 'count': 3},
-            {'rank': '3', 'name': 'Tomoca Coffee House', 'volume': 980.0, 'count': 11},
-            {'rank': '4', 'name': 'Ethio Telecom Fibre', 'volume': 1400.0, 'count': 1},
-          ];
+    final segments = summary.categorySegments;
+
+    if (segments.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: AppColors.line),
+        ),
+        alignment: Alignment.center,
+        child: const Column(
+          children: [
+            Icon(Icons.pie_chart_outline_rounded, color: AppColors.text3, size: 36),
+            SizedBox(height: 8),
+            Text(
+              'No categorized expenses in this period',
+              style: TextStyle(color: AppColors.text2, fontSize: 13, fontWeight: FontWeight.w600),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.line),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          CategoryDonutChart(
+            segments: segments,
+            totalSpent: summary.outflow,
+            isMasked: isPrivate,
+            size: 130,
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: segments.take(4).map<Widget>((seg) {
+                final pct = summary.outflow > 0 ? ((seg.value / summary.outflow) * 100).round() : 0;
+                return Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 8,
+                        height: 8,
+                        decoration: BoxDecoration(
+                          color: seg.color,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          seg.label,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(color: AppColors.text2, fontSize: 12),
+                        ),
+                      ),
+                      Text(
+                        '$pct%',
+                        style: const TextStyle(color: AppColors.text, fontSize: 12, fontWeight: FontWeight.w700),
+                      ),
+                    ],
+                  ),
+                );
+              }).toList(),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTopMerchantsSection({
+    required dynamic summary,
+    required bool isPrivate,
+  }) {
+    final merchants = summary.topMerchants;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -363,66 +372,72 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen> {
             borderRadius: BorderRadius.circular(16),
             border: Border.all(color: AppColors.line),
           ),
-          child: ListView.separated(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            itemCount: effectiveMerchants.length,
-            separatorBuilder: (_, __) => const Divider(color: AppColors.line, height: 1),
-            itemBuilder: (context, index) {
-              final m = effectiveMerchants[index];
-              return ListTile(
-                contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
-                leading: Container(
-                  width: 28,
-                  height: 28,
-                  decoration: BoxDecoration(
-                    color: AppColors.surface2,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  alignment: Alignment.center,
-                  child: Text(
-                    m['rank'] as String,
-                    style: const TextStyle(
-                      color: AppColors.text2,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
+          child: merchants.isEmpty
+              ? const Padding(
+                  padding: EdgeInsets.all(20),
+                  child: Center(
+                    child: Text(
+                      'No merchant data for this period',
+                      style: TextStyle(color: AppColors.text3, fontSize: 13),
                     ),
                   ),
+                )
+              : ListView.separated(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  itemCount: merchants.length,
+                  separatorBuilder: (_, __) => const Divider(color: AppColors.line, height: 1),
+                  itemBuilder: (context, index) {
+                    final m = merchants[index];
+                    return ListTile(
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+                      leading: Container(
+                        width: 28,
+                        height: 28,
+                        decoration: BoxDecoration(
+                          color: AppColors.surface2,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        alignment: Alignment.center,
+                        child: Text(
+                          m.rank,
+                          style: const TextStyle(
+                            color: AppColors.text2,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                      title: Text(
+                        m.name,
+                        style: const TextStyle(
+                          color: AppColors.text,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      subtitle: Text(
+                        '${m.count} transaction${m.count == 1 ? '' : 's'}',
+                        style: const TextStyle(color: AppColors.text3, fontSize: 11),
+                      ),
+                      trailing: Text(
+                        formatCurrency(m.volume, isPrivate: isPrivate),
+                        style: const TextStyle(
+                          color: AppColors.text,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    );
+                  },
                 ),
-                title: Text(
-                  m['name'] as String,
-                  style: const TextStyle(
-                    color: AppColors.text,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                subtitle: Text(
-                  '${m['count']} transactions',
-                  style: const TextStyle(color: AppColors.text3, fontSize: 11),
-                ),
-                trailing: Text(
-                  formatCurrency(m['volume'] as double, isPrivate: isPrivate),
-                  style: const TextStyle(
-                    color: AppColors.text,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              );
-            },
-          ),
         ),
       ],
     );
   }
 
-  Widget _buildCoachInsightsSection(BuildContext context) {
-    final insights = [
-      'Food & Dining made up 34% of your outflow this month, 6% lower than last month.',
-      'You had 0 unaccounted balance drops since you started logging cash withdrawals.',
-      'Switching grocery trips to bi-weekly saved an estimated ETB 650 in impulse purchases.',
-    ];
+  Widget _buildCoachInsightsSection(BuildContext context, {required dynamic summary}) {
+    final observations = summary.observations as List<String>;
 
     return Container(
       padding: const EdgeInsets.all(16),
@@ -449,7 +464,7 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen> {
             ],
           ),
           const SizedBox(height: 12),
-          ...insights.map(
+          ...observations.map(
             (ins) => Padding(
               padding: const EdgeInsets.only(bottom: 10),
               child: Row(
