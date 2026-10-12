@@ -133,6 +133,8 @@ model Transaction {
   parentTxnId        String?   @map("parent_txn_id") @db.Uuid
   dedupeKey          String    @map("dedupe_key")
   needsReview        Boolean   @default(false) @map("needs_review")
+  excludeFromPlan    Boolean   @default(false) @map("exclude_from_plan")
+  planExclusionReason String?  @map("plan_exclusion_reason")
   userEditedFields   String[]  @default([]) @map("user_edited_fields")
   changeSeq          BigInt    @map("change_seq")
   createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -391,27 +393,46 @@ enum RolloverMode {
 }
 
 model BudgetPlan {
-  id              String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  userId          String          @map("user_id") @db.Uuid
-  name            String          @default("My Spending Plan")
-  totalAmount     Decimal         @map("total_amount") @db.Decimal(14, 2)
-  startDate       DateTime        @map("start_date") @db.Date
-  endDate         DateTime        @map("end_date") @db.Date
-  rolloverMode    RolloverMode    @default(SPREAD_EVENLY) @map("rollover_mode")
-  reservePercent  Decimal         @default(0) @map("reserve_percent") @db.Decimal(5, 2)
-  savingGoal      Decimal         @default(0) @map("saving_goal") @db.Decimal(14, 2)
-  minDailyFloor   Decimal         @default(0) @map("min_daily_floor") @db.Decimal(14, 2)
-  dayWeights      Json?           @map("day_weights")
-  active          Boolean         @default(true)
-  changeSeq       BigInt          @map("change_seq")
-  createdAt       DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt       DateTime        @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
-  deletedAt       DateTime?       @map("deleted_at") @db.Timestamptz(6)
+  id                   String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId               String          @map("user_id") @db.Uuid
+  name                 String          @default("My Spending Plan")
+  totalAmount          Decimal         @map("total_amount") @db.Decimal(14, 2)
+  periodType           String          @default("monthly") @map("period_type")
+  startDate            DateTime        @map("start_date") @db.Date
+  endDate              DateTime        @map("end_date") @db.Date
+  monthlyStartDay      Int             @default(1) @map("monthly_start_day")
+  rolloverMode         RolloverMode    @default(SPREAD_EVENLY) @map("rollover_mode")
+  reserveType          String          @default("none") @map("reserve_type")
+  reserveValue         Decimal         @default(0) @map("reserve_value") @db.Decimal(14, 2)
+  reservePercent       Decimal         @default(0) @map("reserve_percent") @db.Decimal(5, 2)
+  savingGoal           Decimal         @default(0) @map("saving_goal") @db.Decimal(14, 2)
+  minDailyFloor        Decimal         @default(0) @map("min_daily_floor") @db.Decimal(14, 2)
+  dayWeights           Json?           @map("day_weights")
+  watchedBankIds       Json?           @map("watched_bank_ids")
+  countFees            Boolean         @default(true) @map("count_fees")
+  countWithdrawals     Boolean         @default(true) @map("count_withdrawals")
+  reactionMode         String          @default("adaptive") @map("reaction_mode")
+  status               String          @default("active")
+  pausedAt             DateTime?       @map("paused_at") @db.Timestamptz(6)
+  pausedDaysCount      Int             @default(0) @map("paused_days_count")
+  morningBriefEnabled  Boolean         @default(true) @map("morning_brief_enabled")
+  morningBriefTime     String          @default("07:30") @map("morning_brief_time")
+  dailyReportEnabled   Boolean         @default(true) @map("daily_report_enabled")
+  dailyReportTime      String          @default("21:00") @map("daily_report_time")
+  skipEmptyDays        Boolean         @default(false) @map("skip_empty_days")
+  alertThresholds      Json            @default("[50, 80, 100]") @map("alert_thresholds")
+  reserveAlertEnabled  Boolean         @default(true) @map("reserve_alert_enabled")
+  finalSummaryPayload  Json?           @map("final_summary_payload")
+  active               Boolean         @default(true)
+  changeSeq            BigInt          @map("change_seq")
+  createdAt            DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime        @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt            DateTime?       @map("deleted_at") @db.Timestamptz(6)
 
-  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  fixedExpenses   FixedExpense[]
-  categoryLimits  CategoryLimit[]
-  snapshots       PlanSnapshot[]
+  user                 User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fixedExpenses        FixedExpense[]
+  categoryLimits       CategoryLimit[]
+  snapshots            PlanSnapshot[]
 
   @@index([userId, active])
   @@index([userId, changeSeq])
@@ -419,17 +440,22 @@ model BudgetPlan {
 }
 
 model FixedExpense {
-  id        String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  planId    String     @map("plan_id") @db.Uuid
-  title     String
-  amount    Decimal    @db.Decimal(14, 2)
-  dueDate   DateTime?  @map("due_date") @db.Date
-  paid      Boolean    @default(false)
-  changeSeq BigInt     @map("change_seq")
-  createdAt DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
-  deletedAt DateTime?  @map("deleted_at") @db.Timestamptz(6)
+  id               String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  planId           String      @map("plan_id") @db.Uuid
+  title            String
+  amount           Decimal     @db.Decimal(14, 2)
+  dueDate          DateTime?   @map("due_date") @db.Date
+  paid             Boolean     @default(false)
+  linkedCategoryId String?     @map("linked_category_id") @db.Uuid
+  status           String      @default("expected")
+  paidAmount       Decimal     @default(0) @map("paid_amount") @db.Decimal(14, 2)
+  paidTxnId        String?     @map("paid_txn_id") @db.Uuid
+  reminderEnabled  Boolean     @default(true) @map("reminder_enabled")
+  changeSeq        BigInt      @map("change_seq")
+  createdAt        DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  deletedAt        DateTime?   @map("deleted_at") @db.Timestamptz(6)
 
-  plan      BudgetPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  plan             BudgetPlan  @relation(fields: [planId], references: [id], onDelete: Cascade)
 
   @@index([planId])
   @@map("fixed_expenses")

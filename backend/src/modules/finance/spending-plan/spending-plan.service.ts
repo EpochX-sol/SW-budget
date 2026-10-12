@@ -5,6 +5,7 @@ import {
   UpdatePlanInput,
   SimulatePlanInput,
   CreateFixedExpenseInput,
+  UpdateFixedExpenseInput,
 } from './spending-plan.schemas.js';
 import {
   computeSnapshot,
@@ -29,27 +30,6 @@ export class SpendingPlanService {
       throw err;
     }
 
-    // Check for overlapping active plan
-    const overlapping = await prisma.budgetPlan.findFirst({
-      where: {
-        userId,
-        active: true,
-        deletedAt: null,
-        OR: [
-          {
-            startDate: { lte: endDate },
-            endDate: { gte: startDate },
-          },
-        ],
-      },
-    });
-
-    if (overlapping) {
-      const err: any = new Error('An active spending plan already overlaps with this timeframe');
-      err.statusCode = 400;
-      throw err;
-    }
-
     // Allocate change_seq
     const syncState = await prisma.userSyncState.upsert({
       where: { userId },
@@ -58,27 +38,65 @@ export class SpendingPlanService {
     });
     const changeSeq = syncState.seq;
 
+    // Enforce single active plan: archive any existing active or paused plan
+    await prisma.budgetPlan.updateMany({
+      where: {
+        userId,
+        status: { in: ['active', 'paused'] },
+        deletedAt: null,
+      },
+      data: {
+        active: false,
+        status: 'archived',
+      },
+    });
+
+    const spendingLimit = input.spending_limit ?? input.total_amount ?? 8000;
+    const allExpenses = [
+      ...(input.fixed_expenses || []),
+      ...(input.expected_expenses || []),
+    ];
+
     const plan = await prisma.budgetPlan.create({
       data: {
         userId,
         name: input.name,
-        totalAmount: new Prisma.Decimal(input.total_amount),
+        totalAmount: new Prisma.Decimal(spendingLimit),
+        periodType: input.period_type ?? 'monthly',
         startDate,
         endDate,
+        monthlyStartDay: input.monthly_start_day ?? 1,
         rolloverMode: input.rollover_mode,
-        reservePercent: new Prisma.Decimal(input.reserve_percent),
-        savingGoal: new Prisma.Decimal(input.saving_goal),
-        minDailyFloor: new Prisma.Decimal(input.min_daily_floor),
+        reserveType: input.reserve_type ?? 'none',
+        reserveValue: new Prisma.Decimal(input.reserve_value ?? 0),
+        reservePercent: new Prisma.Decimal(input.reserve_percent ?? 0),
+        savingGoal: new Prisma.Decimal(input.saving_goal ?? 0),
+        minDailyFloor: new Prisma.Decimal(input.min_daily_floor ?? 0),
         dayWeights: input.day_weights ? (input.day_weights as any) : Prisma.JsonNull,
+        watchedBankIds: input.watched_bank_ids ? (input.watched_bank_ids as any) : Prisma.JsonNull,
+        countFees: input.count_fees ?? true,
+        countWithdrawals: input.count_withdrawals ?? true,
+        reactionMode: input.reaction_mode ?? 'adaptive',
+        status: 'active',
+        morningBriefEnabled: input.morning_brief_enabled ?? true,
+        morningBriefTime: input.morning_brief_time ?? '07:30',
+        dailyReportEnabled: input.daily_report_enabled ?? true,
+        dailyReportTime: input.daily_report_time ?? '21:00',
+        skipEmptyDays: input.skip_empty_days ?? false,
+        alertThresholds: (input.alert_thresholds as any) ?? [50, 80, 100],
+        reserveAlertEnabled: input.reserve_alert_enabled ?? true,
         active: true,
         changeSeq,
-        fixedExpenses: input.fixed_expenses?.length
+        fixedExpenses: allExpenses.length
           ? {
-              create: input.fixed_expenses.map((fe) => ({
-                title: fe.title,
+              create: allExpenses.map((fe: any) => ({
+                title: fe.title || fe.name || 'Expected Expense',
                 amount: new Prisma.Decimal(fe.amount),
                 dueDate: fe.due_date ? new Date(fe.due_date) : null,
-                paid: fe.paid,
+                linkedCategoryId: fe.linked_category_id || null,
+                status: fe.status || (fe.paid ? 'paid' : 'expected'),
+                paid: Boolean(fe.paid || fe.status === 'paid'),
+                reminderEnabled: fe.reminder_enabled ?? true,
                 changeSeq,
               })),
             }
@@ -239,7 +257,55 @@ export class SpendingPlanService {
   }
 
   /**
-   * Adds a fixed expense to an existing plan.
+   * Pauses an active plan.
+   */
+  async pausePlan(userId: string, planId: string) {
+    await this.getPlanById(userId, planId);
+    const syncState = await prisma.userSyncState.update({
+      where: { userId },
+      data: { seq: { increment: 1n } },
+    });
+    const plan = await prisma.budgetPlan.update({
+      where: { id: planId },
+      data: {
+        status: 'paused',
+        pausedAt: new Date(),
+        changeSeq: syncState.seq,
+      },
+    });
+    return { plan };
+  }
+
+  /**
+   * Resumes a paused plan.
+   */
+  async resumePlan(userId: string, planId: string) {
+    const existing: any = await this.getPlanById(userId, planId);
+    let extraDays = 0;
+    if (existing.pausedAt) {
+      extraDays = Math.max(0, Math.floor((Date.now() - new Date(existing.pausedAt).getTime()) / (1000 * 60 * 60 * 24)));
+    }
+    const totalPausedDays = (existing.pausedDaysCount || 0) + extraDays;
+
+    const syncState = await prisma.userSyncState.update({
+      where: { userId },
+      data: { seq: { increment: 1n } },
+    });
+    const plan = await prisma.budgetPlan.update({
+      where: { id: planId },
+      data: {
+        status: 'active',
+        pausedAt: null,
+        pausedDaysCount: totalPausedDays,
+        changeSeq: syncState.seq,
+      },
+    });
+    const snapshot = await this.recomputeSnapshot(planId, userId);
+    return { plan, snapshot };
+  }
+
+  /**
+   * Adds an expected expense (fixed commitment) to an existing plan.
    */
   async addFixedExpense(userId: string, planId: string, input: CreateFixedExpenseInput) {
     await this.getPlanById(userId, planId);
@@ -252,10 +318,13 @@ export class SpendingPlanService {
     const fe = await prisma.fixedExpense.create({
       data: {
         planId,
-        title: input.title,
+        title: input.title || input.name || 'Expected Expense',
         amount: new Prisma.Decimal(input.amount),
         dueDate: input.due_date ? new Date(input.due_date) : null,
-        paid: input.paid,
+        linkedCategoryId: input.linked_category_id || null,
+        status: input.status || (input.paid ? 'paid' : 'expected'),
+        paid: input.paid || input.status === 'paid',
+        reminderEnabled: input.reminder_enabled ?? true,
         changeSeq: syncState.seq,
       },
     });
@@ -266,6 +335,81 @@ export class SpendingPlanService {
       fixedExpense: fe,
       snapshot,
     };
+  }
+
+  /**
+   * Updates an existing expected expense.
+   */
+  async updateFixedExpense(userId: string, planId: string, expenseId: string, input: UpdateFixedExpenseInput) {
+    await this.getPlanById(userId, planId);
+    const syncState = await prisma.userSyncState.update({
+      where: { userId },
+      data: { seq: { increment: 1n } },
+    });
+
+    const data: any = { changeSeq: syncState.seq };
+    if (input.title || input.name) data.title = input.title || input.name;
+    if (input.amount !== undefined) data.amount = new Prisma.Decimal(input.amount);
+    if (input.due_date !== undefined) data.dueDate = input.due_date ? new Date(input.due_date) : null;
+    if (input.linked_category_id !== undefined) data.linkedCategoryId = input.linked_category_id;
+    if (input.reminder_enabled !== undefined) data.reminderEnabled = input.reminder_enabled;
+    if (input.status !== undefined) {
+      data.status = input.status;
+      data.paid = input.status === 'paid';
+    }
+    if (input.paid !== undefined) {
+      data.paid = input.paid;
+      data.status = input.paid ? 'paid' : 'expected';
+    }
+
+    const fe = await prisma.fixedExpense.update({
+      where: { id: expenseId },
+      data,
+    });
+    const snapshot = await this.recomputeSnapshot(planId, userId);
+    return { fixedExpense: fe, snapshot };
+  }
+
+  /**
+   * Deletes an expected expense.
+   */
+  async deleteFixedExpense(userId: string, planId: string, expenseId: string) {
+    await this.getPlanById(userId, planId);
+    const syncState = await prisma.userSyncState.update({
+      where: { userId },
+      data: { seq: { increment: 1n } },
+    });
+    await prisma.fixedExpense.update({
+      where: { id: expenseId },
+      data: {
+        deletedAt: new Date(),
+        changeSeq: syncState.seq,
+      },
+    });
+    const snapshot = await this.recomputeSnapshot(planId, userId);
+    return { success: true, snapshot };
+  }
+
+  /**
+   * Toggles paid status on an expected expense.
+   */
+  async markFixedExpensePaid(userId: string, planId: string, expenseId: string, paid: boolean, paidTxnId?: string) {
+    await this.getPlanById(userId, planId);
+    const syncState = await prisma.userSyncState.update({
+      where: { userId },
+      data: { seq: { increment: 1n } },
+    });
+    const fe = await prisma.fixedExpense.update({
+      where: { id: expenseId },
+      data: {
+        paid,
+        status: paid ? 'paid' : 'expected',
+        paidTxnId: paid ? paidTxnId || null : null,
+        changeSeq: syncState.seq,
+      },
+    });
+    const snapshot = await this.recomputeSnapshot(planId, userId);
+    return { fixedExpense: fe, snapshot };
   }
 
   /**

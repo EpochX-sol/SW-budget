@@ -13,6 +13,8 @@ import 'tables/local_limits.dart';
 import 'tables/local_saving_plans.dart';
 import 'tables/local_sync_state.dart';
 import 'tables/local_unparsed_messages.dart';
+import 'tables/local_budget_plans.dart';
+import 'tables/local_expected_expenses.dart';
 
 export 'tables/local_accounts.dart';
 export 'tables/local_categories.dart';
@@ -21,6 +23,8 @@ export 'tables/local_limits.dart';
 export 'tables/local_saving_plans.dart';
 export 'tables/local_sync_state.dart';
 export 'tables/local_unparsed_messages.dart';
+export 'tables/local_budget_plans.dart';
+export 'tables/local_expected_expenses.dart';
 
 DynamicLibrary _openSqlCipherOnAndroid() {
   try {
@@ -91,6 +95,8 @@ enum DatabaseTable {
   unparsedMessages,
   debts,
   reimbursements,
+  budgetPlans,
+  expectedExpenses,
 }
 
 /// Encrypted Local SQLite Database using SQLCipher (AES-256)
@@ -277,19 +283,58 @@ class AppDatabase {
         deleted_at TEXT
       );
 
-      CREATE TABLE IF NOT EXISTS local_reimbursements (
+      CREATE TABLE IF NOT EXISTS local_budget_plans (
         id TEXT PRIMARY KEY,
-        title TEXT NOT NULL,
-        amount REAL NOT NULL,
-        paid_amount REAL NOT NULL DEFAULT 0.0,
-        status TEXT NOT NULL DEFAULT 'pending',
-        note TEXT,
+        name TEXT NOT NULL,
+        period_type TEXT NOT NULL,
+        start_date TEXT NOT NULL,
+        end_date TEXT NOT NULL,
+        monthly_start_day INTEGER NOT NULL DEFAULT 1,
+        spending_limit REAL NOT NULL,
+        reserve_type TEXT NOT NULL DEFAULT 'none',
+        reserve_value REAL NOT NULL DEFAULT 0.0,
+        watched_bank_ids TEXT,
+        count_fees INTEGER NOT NULL DEFAULT 1,
+        count_withdrawals INTEGER NOT NULL DEFAULT 1,
+        reaction_mode TEXT NOT NULL DEFAULT 'adaptive',
+        status TEXT NOT NULL DEFAULT 'active',
+        paused_at TEXT,
+        paused_days_count INTEGER NOT NULL DEFAULT 0,
+        morning_brief_enabled INTEGER NOT NULL DEFAULT 1,
+        morning_brief_time TEXT NOT NULL DEFAULT '07:30',
+        daily_report_enabled INTEGER NOT NULL DEFAULT 1,
+        daily_report_time TEXT NOT NULL DEFAULT '21:00',
+        skip_empty_days INTEGER NOT NULL DEFAULT 0,
+        alert_thresholds TEXT NOT NULL DEFAULT '[50,80,100]',
+        reserve_alert_enabled INTEGER NOT NULL DEFAULT 1,
+        final_summary_payload TEXT,
         change_seq INTEGER NOT NULL DEFAULT 0,
         is_dirty INTEGER NOT NULL DEFAULT 1,
         created_at TEXT NOT NULL,
         updated_at TEXT,
         deleted_at TEXT
       );
+
+      CREATE TABLE IF NOT EXISTS local_expected_expenses (
+        id TEXT PRIMARY KEY,
+        plan_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        amount REAL NOT NULL,
+        due_date TEXT,
+        linked_category_id TEXT,
+        status TEXT NOT NULL DEFAULT 'expected',
+        paid_amount REAL NOT NULL DEFAULT 0.0,
+        paid_txn_id TEXT,
+        reminder_enabled INTEGER NOT NULL DEFAULT 1,
+        change_seq INTEGER NOT NULL DEFAULT 0,
+        is_dirty INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL,
+        updated_at TEXT,
+        deleted_at TEXT
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_plan_active ON local_budget_plans(status);
+      CREATE INDEX IF NOT EXISTS idx_expected_plan ON local_expected_expenses(plan_id);
     ''');
 
     // Migration safe guards for existing local db instances
@@ -297,6 +342,8 @@ class AppDatabase {
     try { _db.execute('ALTER TABLE local_debts ADD COLUMN is_dirty INTEGER NOT NULL DEFAULT 1;'); } catch (_) {}
     try { _db.execute('ALTER TABLE local_reimbursements ADD COLUMN change_seq INTEGER NOT NULL DEFAULT 0;'); } catch (_) {}
     try { _db.execute('ALTER TABLE local_reimbursements ADD COLUMN is_dirty INTEGER NOT NULL DEFAULT 1;'); } catch (_) {}
+    try { _db.execute('ALTER TABLE local_transactions ADD COLUMN exclude_from_plan INTEGER NOT NULL DEFAULT 0;'); } catch (_) {}
+    try { _db.execute('ALTER TABLE local_transactions ADD COLUMN plan_exclusion_reason TEXT;'); } catch (_) {}
   }
 
   // --- ACCOUNTS ---
@@ -1121,6 +1168,273 @@ class AppDatabase {
     _notify(DatabaseTable.reimbursements);
   }
 
+  // --- BUDGET PLANS (v2 Adaptive Single Plan) ---
+
+  Map<String, dynamic>? getActiveBudgetPlan() {
+    final result = _db.select('''
+      SELECT * FROM local_budget_plans 
+      WHERE (status = 'active' OR status = 'paused' OR status = 'finished') AND deleted_at IS NULL 
+      ORDER BY created_at DESC LIMIT 1;
+    ''');
+    if (result.isEmpty) return null;
+    return Map<String, dynamic>.from(result.first);
+  }
+
+  Map<String, dynamic>? getBudgetPlanById(String id) {
+    final result = _db.select('SELECT * FROM local_budget_plans WHERE id = ?;', [id]);
+    if (result.isEmpty) return null;
+    return Map<String, dynamic>.from(result.first);
+  }
+
+  void upsertBudgetPlan({
+    required String id,
+    required String name,
+    required String periodType,
+    required DateTime startDate,
+    required DateTime endDate,
+    int monthlyStartDay = 1,
+    required double spendingLimit,
+    String reserveType = 'none',
+    double reserveValue = 0.0,
+    String? watchedBankIds,
+    bool countFees = true,
+    bool countWithdrawals = true,
+    String reactionMode = 'adaptive',
+    String status = 'active',
+    DateTime? pausedAt,
+    int pausedDaysCount = 0,
+    bool morningBriefEnabled = true,
+    String morningBriefTime = '07:30',
+    bool dailyReportEnabled = true,
+    String dailyReportTime = '21:00',
+    bool skipEmptyDays = false,
+    String alertThresholds = '[50,80,100]',
+    bool reserveAlertEnabled = true,
+    String? finalSummaryPayload,
+    int changeSeq = 0,
+    bool isDirty = true,
+    DateTime? createdAt,
+  }) {
+    final now = DateTime.now().toIso8601String();
+    final created = (createdAt ?? DateTime.now()).toIso8601String();
+    final start = startDate.toIso8601String();
+    final end = endDate.toIso8601String();
+    final paused = pausedAt?.toIso8601String();
+
+    // Enforce single active plan: archive any other active plan
+    _db.execute('''
+      UPDATE local_budget_plans 
+      SET status = 'archived', updated_at = ?, is_dirty = 1 
+      WHERE id != ? AND (status = 'active' OR status = 'paused');
+    ''', [now, id]);
+
+    _db.execute('''
+      INSERT INTO local_budget_plans (
+        id, name, period_type, start_date, end_date, monthly_start_day,
+        spending_limit, reserve_type, reserve_value, watched_bank_ids,
+        count_fees, count_withdrawals, reaction_mode, status,
+        paused_at, paused_days_count, morning_brief_enabled, morning_brief_time,
+        daily_report_enabled, daily_report_time, skip_empty_days,
+        alert_thresholds, reserve_alert_enabled, final_summary_payload,
+        change_seq, is_dirty, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        name = excluded.name,
+        period_type = excluded.period_type,
+        start_date = excluded.start_date,
+        end_date = excluded.end_date,
+        monthly_start_day = excluded.monthly_start_day,
+        spending_limit = excluded.spending_limit,
+        reserve_type = excluded.reserve_type,
+        reserve_value = excluded.reserve_value,
+        watched_bank_ids = excluded.watched_bank_ids,
+        count_fees = excluded.count_fees,
+        count_withdrawals = excluded.count_withdrawals,
+        reaction_mode = excluded.reaction_mode,
+        status = excluded.status,
+        paused_at = excluded.paused_at,
+        paused_days_count = excluded.paused_days_count,
+        morning_brief_enabled = excluded.morning_brief_enabled,
+        morning_brief_time = excluded.morning_brief_time,
+        daily_report_enabled = excluded.daily_report_enabled,
+        daily_report_time = excluded.daily_report_time,
+        skip_empty_days = excluded.skip_empty_days,
+        alert_thresholds = excluded.alert_thresholds,
+        reserve_alert_enabled = excluded.reserve_alert_enabled,
+        final_summary_payload = excluded.final_summary_payload,
+        change_seq = excluded.change_seq,
+        is_dirty = excluded.is_dirty,
+        updated_at = excluded.updated_at,
+        deleted_at = NULL;
+    ''', [
+      id, name, periodType, start, end, monthlyStartDay,
+      spendingLimit, reserveType, reserveValue, watchedBankIds,
+      countFees ? 1 : 0, countWithdrawals ? 1 : 0, reactionMode, status,
+      paused, pausedDaysCount, morningBriefEnabled ? 1 : 0, morningBriefTime,
+      dailyReportEnabled ? 1 : 0, dailyReportTime, skipEmptyDays ? 1 : 0,
+      alertThresholds, reserveAlertEnabled ? 1 : 0, finalSummaryPayload,
+      changeSeq, isDirty ? 1 : 0, created, now,
+    ]);
+
+    _notify(DatabaseTable.budgetPlans);
+  }
+
+  void pauseBudgetPlan(String id) {
+    final now = DateTime.now().toIso8601String();
+    _db.execute('''
+      UPDATE local_budget_plans 
+      SET status = 'paused', paused_at = ?, is_dirty = 1, updated_at = ? 
+      WHERE id = ?;
+    ''', [now, now, id]);
+    _notify(DatabaseTable.budgetPlans);
+  }
+
+  void resumeBudgetPlan(String id) {
+    final plan = getBudgetPlanById(id);
+    if (plan == null) return;
+    int extraPausedDays = 0;
+    final pausedAtStr = plan['paused_at'] as String?;
+    if (pausedAtStr != null) {
+      final pausedDate = DateTime.tryParse(pausedAtStr);
+      if (pausedDate != null) {
+        extraPausedDays = DateTime.now().difference(pausedDate).inDays;
+        if (extraPausedDays < 0) extraPausedDays = 0;
+      }
+    }
+    final existingPausedDays = (plan['paused_days_count'] as num?)?.toInt() ?? 0;
+    final totalPaused = existingPausedDays + extraPausedDays;
+
+    final now = DateTime.now().toIso8601String();
+    _db.execute('''
+      UPDATE local_budget_plans 
+      SET status = 'active', paused_at = NULL, paused_days_count = ?, is_dirty = 1, updated_at = ? 
+      WHERE id = ?;
+    ''', [totalPaused, now, id]);
+    _notify(DatabaseTable.budgetPlans);
+  }
+
+  void deleteBudgetPlan(String id) {
+    final now = DateTime.now().toIso8601String();
+    _db.execute('''
+      UPDATE local_budget_plans 
+      SET deleted_at = ?, updated_at = ?, is_dirty = 1 
+      WHERE id = ?;
+    ''', [now, now, id]);
+    _notify(DatabaseTable.budgetPlans);
+  }
+
+  void finishBudgetPlan(String id, String finalSummaryJson) {
+    final now = DateTime.now().toIso8601String();
+    _db.execute('''
+      UPDATE local_budget_plans 
+      SET status = 'finished', final_summary_payload = ?, updated_at = ?, is_dirty = 1 
+      WHERE id = ?;
+    ''', [finalSummaryJson, now, id]);
+    _notify(DatabaseTable.budgetPlans);
+  }
+
+  // --- EXPECTED EXPENSES ---
+
+  List<Map<String, dynamic>> getExpectedExpensesForPlan(String planId, {bool includeDeleted = false}) {
+    final query = includeDeleted
+        ? 'SELECT * FROM local_expected_expenses WHERE plan_id = ? ORDER BY due_date ASC;'
+        : 'SELECT * FROM local_expected_expenses WHERE plan_id = ? AND deleted_at IS NULL ORDER BY due_date ASC;';
+    final result = _db.select(query, [planId]);
+    return result.map((row) => Map<String, dynamic>.from(row)).toList();
+  }
+
+  void upsertExpectedExpense({
+    required String id,
+    required String planId,
+    required String name,
+    required double amount,
+    DateTime? dueDate,
+    String? linkedCategoryId,
+    String status = 'expected',
+    double paidAmount = 0.0,
+    String? paidTxnId,
+    bool reminderEnabled = true,
+    int changeSeq = 0,
+    bool isDirty = true,
+    DateTime? createdAt,
+  }) {
+    final now = DateTime.now().toIso8601String();
+    final created = (createdAt ?? DateTime.now()).toIso8601String();
+    final due = dueDate?.toIso8601String();
+
+    _db.execute('''
+      INSERT INTO local_expected_expenses (
+        id, plan_id, name, amount, due_date, linked_category_id,
+        status, paid_amount, paid_txn_id, reminder_enabled,
+        change_seq, is_dirty, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        name = excluded.name,
+        amount = excluded.amount,
+        due_date = excluded.due_date,
+        linked_category_id = excluded.linked_category_id,
+        status = excluded.status,
+        paid_amount = excluded.paid_amount,
+        paid_txn_id = excluded.paid_txn_id,
+        reminder_enabled = excluded.reminder_enabled,
+        change_seq = excluded.change_seq,
+        is_dirty = excluded.is_dirty,
+        updated_at = excluded.updated_at,
+        deleted_at = NULL;
+    ''', [
+      id, planId, name, amount, due, linkedCategoryId,
+      status, paidAmount, paidTxnId, reminderEnabled ? 1 : 0,
+      changeSeq, isDirty ? 1 : 0, created, now,
+    ]);
+    _notify(DatabaseTable.expectedExpenses);
+  }
+
+  void markExpectedExpensePaid(String id, {double? paidAmount, String? paidTxnId}) {
+    final now = DateTime.now().toIso8601String();
+    _db.execute('''
+      UPDATE local_expected_expenses 
+      SET status = 'paid', 
+          paid_amount = COALESCE(?, amount), 
+          paid_txn_id = ?, 
+          updated_at = ?, 
+          is_dirty = 1 
+      WHERE id = ?;
+    ''', [paidAmount, paidTxnId, now, id]);
+    _notify(DatabaseTable.expectedExpenses);
+  }
+
+  void markExpectedExpenseUnpaid(String id) {
+    final now = DateTime.now().toIso8601String();
+    _db.execute('''
+      UPDATE local_expected_expenses 
+      SET status = 'expected', paid_amount = 0.0, paid_txn_id = NULL, updated_at = ?, is_dirty = 1 
+      WHERE id = ?;
+    ''', [now, id]);
+    _notify(DatabaseTable.expectedExpenses);
+  }
+
+  void deleteExpectedExpense(String id) {
+    final now = DateTime.now().toIso8601String();
+    _db.execute('''
+      UPDATE local_expected_expenses 
+      SET deleted_at = ?, updated_at = ?, is_dirty = 1 
+      WHERE id = ?;
+    ''', [now, now, id]);
+    _notify(DatabaseTable.expectedExpenses);
+  }
+
+  // --- TRANSACTION PLAN EXCLUSION ---
+
+  void setTransactionPlanExclusion(String id, {required bool exclude, String? reason}) {
+    final now = DateTime.now().toIso8601String();
+    _db.execute('''
+      UPDATE local_transactions 
+      SET exclude_from_plan = ?, plan_exclusion_reason = ?, updated_at = ?, is_dirty = 1 
+      WHERE id = ?;
+    ''', [exclude ? 1 : 0, reason, now, id]);
+    _notify(DatabaseTable.transactions);
+  }
+
   void _notify(DatabaseTable table) {
     if (!_changeController.isClosed) {
       _changeController.add(table);
@@ -1137,6 +1451,8 @@ class AppDatabase {
     _db.execute('DELETE FROM local_unparsed_messages;');
     _db.execute('DELETE FROM local_debts;');
     _db.execute('DELETE FROM local_reimbursements;');
+    _db.execute('DELETE FROM local_budget_plans;');
+    _db.execute('DELETE FROM local_expected_expenses;');
     _notify(DatabaseTable.transactions);
     _notify(DatabaseTable.accounts);
     _notify(DatabaseTable.categories);
@@ -1144,6 +1460,8 @@ class AppDatabase {
     _notify(DatabaseTable.savingPlans);
     _notify(DatabaseTable.debts);
     _notify(DatabaseTable.reimbursements);
+    _notify(DatabaseTable.budgetPlans);
+    _notify(DatabaseTable.expectedExpenses);
   }
 
   void close() {

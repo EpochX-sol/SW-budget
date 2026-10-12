@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
@@ -5,1088 +6,1025 @@ import 'package:intl/intl.dart';
 import '../../core/security/privacy_provider.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/widgets/charts/pace_chart.dart';
-import '../../core/widgets/progress_ring.dart';
-import '../../core/widgets/sheets/envelope_edit_sheet.dart';
-import '../../core/widgets/sheets/goal_edit_sheet.dart';
-import '../../core/widgets/sheets/plan_edit_sheet.dart';
-import '../../core/widgets/status_pill.dart';
-import '../../core/widgets/tick_bar.dart';
-import '../../domain/use_cases/budget_math_service.dart';
+import '../../domain/use_cases/plan_evaluation_engine.dart';
 import 'plan_providers.dart';
+import 'presentation/add_plan_expense_sheet.dart';
+import 'presentation/plan_creation_wizard.dart';
 
-class PlanScreen extends ConsumerWidget {
+class PlanScreen extends ConsumerStatefulWidget {
   const PlanScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final limitsAsync = ref.watch(limitsStreamProvider);
-    final goalsAsync = ref.watch(savingPlansStreamProvider);
-    final safeToSpend = ref.watch(safeToSpendProvider);
+  ConsumerState<PlanScreen> createState() => _PlanScreenState();
+}
+
+class _PlanScreenState extends ConsumerState<PlanScreen> {
+  bool _notCountedExpanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final activePlanAsync = ref.watch(activeBudgetPlanStreamProvider);
+    final snapshot = ref.watch(planEvaluationSnapshotProvider);
     final isPrivate = ref.watch(privacyModeProvider);
-    final dailySpendsAsync = ref.watch(currentMonthDailySpendProvider);
-    final cycleWeeksAsync = ref.watch(cycleWeeksSpendProvider);
-
-    final rawLimits = limitsAsync.value ?? [];
-    final rawGoals = goalsAsync.value ?? [];
-    final dailySpends = dailySpendsAsync.value ?? const [];
-    final cycleWeeks = cycleWeeksAsync.value ?? const [];
-
-    final now = DateTime.now();
-    final currentMonthName = DateFormat('MMMM \'yy').format(now);
-
-    final double totalBudget = safeToSpend.totalBudget > 0 ? safeToSpend.totalBudget : 25000.00;
-    final double spentSoFar = safeToSpend.spentSoFar > 0 ? safeToSpend.spentSoFar : 9450.00;
-    const double upcomingBills = 1850.00;
-    final double emergencyReserve = totalBudget * 0.10;
-    final double availableToSpend =
-        (totalBudget - spentSoFar - upcomingBills - emergencyReserve).clamp(0.0, double.infinity);
-
-    final double safeToday = safeToSpend.safeToday > 0 ? safeToSpend.safeToday : 896.82;
-    final int daysElapsed = safeToSpend.daysElapsed > 0 ? safeToSpend.daysElapsed : now.day;
-    final int totalDays =
-        safeToSpend.totalDaysInPeriod > 0 ? safeToSpend.totalDaysInPeriod : 30;
-    final int daysLeft = totalDays - daysElapsed;
-
-    final double tomorrowAllowance = safeToday * 1.05;
-    final double nextWeekAllowance = safeToday * 0.98;
-
-    final burnRatio = safeToSpend.burnRatio > 0 ? safeToSpend.burnRatio : 0.94;
-    final statusString = safeToSpend.pace == SpendingPace.ahead
-        ? 'AHEAD'
-        : safeToSpend.pace == SpendingPace.caution
-            ? 'CAUTION'
-            : safeToSpend.pace == SpendingPace.deficit
-                ? 'DEFICIT'
-                : 'ON TRACK';
-
-    final ringProgress = (spentSoFar / totalBudget).clamp(0.0, 1.0);
 
     return Scaffold(
       backgroundColor: AppColors.background,
       body: SafeArea(
-        child: RefreshIndicator(
-          color: AppColors.accent,
-          backgroundColor: AppColors.surface,
-          onRefresh: () async {
-            ref.invalidate(limitsStreamProvider);
-            ref.invalidate(savingPlansStreamProvider);
+        child: activePlanAsync.when(
+          data: (plan) {
+            if (plan == null) {
+              return _buildEmptyState(context);
+            }
+            if (snapshot == null) {
+              return const Center(child: CircularProgressIndicator(color: AppColors.accent));
+            }
+
+            final status = (plan['status'] as String? ?? 'active').toLowerCase();
+            if (status == 'finished') {
+              return _buildFinishedState(context, plan, snapshot);
+            }
+
+            final startDate = DateTime.parse(plan['start_date'] as String);
+            final now = DateTime.now();
+            final today = DateTime(now.year, now.month, now.day);
+            if (today.isBefore(startDate)) {
+              return _buildNotStartedState(context, plan, startDate);
+            }
+
+            return _buildActiveDashboard(context, plan, snapshot, isPrivate, isPaused: status == 'paused');
           },
-          child: ListView(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            children: [
-              // 1. Header: Plan Name + Edit Button
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'ACTIVE PLAN',
-                        style: TextStyle(
-                          color: AppColors.text3,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: 1.1,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        '$currentMonthName Plan',
-                        style: const TextStyle(
-                          color: AppColors.text,
-                          fontSize: 22,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: -0.4,
-                        ),
-                      ),
-                    ],
-                  ),
-                  GestureDetector(
-                    onTap: () => PlanEditSheet.show(
-                      context,
-                      currentPlan: {
-                        'name': '$currentMonthName Plan',
-                        'budget': totalBudget,
-                        'reserve_pct': 10.0,
-                        'rollover': 'SPREAD_EVENLY',
-                      },
-                      onSave: ({
-                        required String name,
-                        required String startDate,
-                        required String endDate,
-                        required double budget,
-                        required double reservePct,
-                        required String rollover,
-                      }) {
-                        ref.read(planControllerProvider).saveOverallBudget(
-                              budget: budget,
-                              reservePct: reservePct,
-                              rollover: rollover,
-                            );
-                      },
-                    ),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                      decoration: BoxDecoration(
-                        color: AppColors.surface,
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: AppColors.line),
-                      ),
-                      child: const Row(
-                        children: [
-                          Icon(Icons.tune_rounded, color: AppColors.accent, size: 16),
-                          SizedBox(width: 6),
-                          Text(
-                            'Edit Plan',
-                            style: TextStyle(
-                              color: AppColors.accent,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-
-              // 2. Safe to Spend Hero Card
-              _buildSafeToSpendHero(
-                safeToday: safeToday,
-                daysElapsed: daysElapsed,
-                daysLeft: daysLeft,
-                totalDays: totalDays,
-                ringProgress: ringProgress,
-                statusString: statusString,
-                isPrivate: isPrivate,
-              ),
-              const SizedBox(height: 14),
-
-              // 3. Tomorrow & Next Week Projection Cards
-              Row(
-                children: [
-                  Expanded(
-                    child: _buildProjectionTile(
-                      label: 'Tomorrow allowance',
-                      amount: tomorrowAllowance,
-                      tag: '+5% vs today',
-                      tagColor: AppColors.income,
-                      isPrivate: isPrivate,
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: _buildProjectionTile(
-                      label: 'Next week daily',
-                      amount: nextWeekAllowance,
-                      tag: 'Projected',
-                      tagColor: AppColors.accent,
-                      isPrivate: isPrivate,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 14),
-
-              // 4. Capacity Table
-              _buildCapacityCard(
-                totalBudget: totalBudget,
-                spentSoFar: spentSoFar,
-                upcomingBills: upcomingBills,
-                emergencyReserve: emergencyReserve,
-                availableToSpend: availableToSpend,
-                burnRatio: burnRatio,
-                isPrivate: isPrivate,
-              ),
-              const SizedBox(height: 18),
-
-              // 5. Pace Chart
-              _buildPaceChartSection(
-                totalDays: totalDays,
-                currentDay: now.day,
-                budget: totalBudget,
-                spentByDay: dailySpends,
-                isPrivate: isPrivate,
-              ),
-              const SizedBox(height: 18),
-
-              // 6. 4-Week Cycle Cards
-              _buildCycleWeeksSection(
-                cycleWeeks: cycleWeeks,
-                isPrivate: isPrivate,
-              ),
-              const SizedBox(height: 18),
-
-              // 7. Category Envelopes
-              _buildCategoryEnvelopesSection(context, ref, rawLimits, isPrivate),
-              const SizedBox(height: 18),
-
-              // 8. Upcoming Bills
-              _buildUpcomingBillsSection(context, isPrivate),
-              const SizedBox(height: 18),
-
-              // 9. Saving Goals Jars
-              _buildSavingGoalsSection(context, ref, rawGoals, isPrivate),
-              const SizedBox(height: 24),
-            ],
+          loading: () => const Center(child: CircularProgressIndicator(color: AppColors.accent)),
+          error: (err, _) => Center(
+            child: Text('Error loading plan: $err', style: const TextStyle(color: AppColors.negative)),
           ),
+        ),
+      ),
+      floatingActionButton: snapshot != null && (snapshot.plan['status'] ?? '') != 'finished'
+          ? FloatingActionButton.extended(
+              backgroundColor: AppColors.accent,
+              foregroundColor: AppColors.background,
+              icon: const Icon(Icons.add),
+              label: const Text('Add Expense', style: TextStyle(fontWeight: FontWeight.w700)),
+              onPressed: () {
+                showModalBottomSheet(
+                  context: context,
+                  isScrollControlled: true,
+                  backgroundColor: AppColors.surface,
+                  shape: const RoundedRectangleBorder(
+                    borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+                  ),
+                  builder: (_) => AddPlanExpenseSheet(snapshot: snapshot),
+                );
+              },
+            )
+          : null,
+    );
+  }
+
+  // ==========================================
+  // 1. EMPTY STATE
+  // ==========================================
+  Widget _buildEmptyState(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: 80,
+              height: 80,
+              decoration: BoxDecoration(
+                color: AppColors.accent.withOpacity(0.1),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.savings_outlined, color: AppColors.accent, size: 40),
+            ),
+            const SizedBox(height: 24),
+            const Text(
+              'No Plan Yet',
+              style: TextStyle(
+                color: AppColors.text,
+                fontSize: 24,
+                fontWeight: FontWeight.w800,
+                letterSpacing: -0.5,
+              ),
+            ),
+            const SizedBox(height: 10),
+            const Text(
+              'Set how much you plan to spend, list your expected bills, and know exactly what you can spend each day.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: AppColors.text3, fontSize: 14, height: 1.4),
+            ),
+            const SizedBox(height: 32),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.accent,
+                foregroundColor: AppColors.background,
+                padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 15),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                elevation: 0,
+              ),
+              onPressed: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const PlanCreationWizard()),
+                );
+              },
+              child: const Text(
+                'Create My Plan',
+                style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const PlanCreationWizard()),
+                );
+              },
+              child: const Text(
+                'Suggest one from my history',
+                style: TextStyle(color: AppColors.text3, fontSize: 13, fontWeight: FontWeight.w600),
+              ),
+            ),
+          ],
         ),
       ),
     );
   }
 
-  Widget _buildSafeToSpendHero({
-    required double safeToday,
-    required int daysElapsed,
-    required int daysLeft,
-    required int totalDays,
-    required double ringProgress,
-    required String statusString,
-    required bool isPrivate,
-  }) {
-    final cyclePercent = totalDays > 0 ? (daysElapsed / totalDays).clamp(0.0, 1.0) : 0.4;
+  // ==========================================
+  // 2. NOT STARTED STATE
+  // ==========================================
+  Widget _buildNotStartedState(BuildContext context, Map<String, dynamic> plan, DateTime start) {
+    final daysUntil = start.difference(DateTime.now()).inDays + 1;
+    final planName = plan['name'] as String? ?? 'Upcoming Plan';
+    final limit = (plan['spending_limit'] as num?)?.toDouble() ?? 0.0;
 
-    return Container(
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: AppColors.line2),
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.timer_outlined, color: AppColors.accent, size: 54),
+            const SizedBox(height: 16),
+            Text(
+              planName,
+              style: const TextStyle(color: AppColors.text, fontSize: 22, fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Starts in $daysUntil days on ${DateFormat('d MMMM yyyy').format(start)}',
+              style: const TextStyle(color: AppColors.text3, fontSize: 14),
+            ),
+            const SizedBox(height: 20),
+            Text(
+              'Planned limit: ETB ${NumberFormat('#,##0').format(limit)}',
+              style: const TextStyle(color: AppColors.accent, fontWeight: FontWeight.w700, fontSize: 16),
+            ),
+            const SizedBox(height: 32),
+            OutlinedButton(
+              style: OutlinedButton.styleFrom(
+                side: const BorderSide(color: AppColors.surface3),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+              onPressed: () => _confirmDeletePlan(context, plan['id'] as String),
+              child: const Text('Cancel or Delete Plan', style: TextStyle(color: AppColors.negative)),
+            ),
+          ],
+        ),
       ),
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        children: [
-          Row(
-            children: [
-              ProgressRing(
-                progress: ringProgress,
-                size: 96,
-                strokeWidth: 8,
-                progressColor: AppColors.accent,
-                centerChild: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      '${(ringProgress * 100).toInt()}%',
-                      style: const TextStyle(
-                        color: AppColors.text,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    const Text(
-                      'Used',
-                      style: TextStyle(
-                        color: AppColors.text3,
-                        fontSize: 10,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text(
-                          'Safe to spend today',
-                          style: TextStyle(
-                            color: AppColors.text2,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                        StatusPill(status: statusString),
-                      ],
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      formatCurrency(safeToday, isPrivate: isPrivate),
-                      style: const TextStyle(
-                        color: AppColors.text,
-                        fontSize: 24,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: -0.4,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      'Recalculated every midnight from real activity',
-                      style: const TextStyle(
-                        color: AppColors.text3,
-                        fontSize: 11,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
+    );
+  }
+
+  // ==========================================
+  // 3. FINISHED STATE (One-time Result Card)
+  // ==========================================
+  Widget _buildFinishedState(
+    BuildContext context,
+    Map<String, dynamic> plan,
+    PlanEvaluationSnapshot snapshot,
+  ) {
+    final planId = plan['id'] as String;
+    final diff = snapshot.spendingLimit - snapshot.totalSpent;
+    final isUnder = diff >= 0;
+
+    return ListView(
+      padding: const EdgeInsets.all(20),
+      children: [
+        const SizedBox(height: 20),
+        Container(
+          padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(
+            color: AppColors.surface,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: isUnder ? AppColors.positive : AppColors.negative, width: 1.5),
           ),
-          const SizedBox(height: 14),
-          // Cycle Progress Bar
-          Column(
+          child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text(
-                    '$daysElapsed days passed',
-                    style: const TextStyle(color: AppColors.text3, fontSize: 11),
-                  ),
-                  Text(
-                    '$daysLeft days left in cycle',
-                    style: const TextStyle(
-                      color: AppColors.accent,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
+                  const Text('PLAN COMPLETED', style: TextStyle(color: AppColors.text3, fontSize: 11, fontWeight: FontWeight.w800, letterSpacing: 1.1)),
+                  Icon(isUnder ? Icons.check_circle : Icons.warning_amber, color: isUnder ? AppColors.positive : AppColors.negative, size: 24),
                 ],
               ),
-              const SizedBox(height: 6),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(4),
-                child: LinearProgressIndicator(
-                  value: cyclePercent,
-                  backgroundColor: AppColors.surface3,
-                  valueColor: const AlwaysStoppedAnimation<Color>(AppColors.accent),
-                  minHeight: 5,
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildProjectionTile({
-    required String label,
-    required double amount,
-    required String tag,
-    required Color tagColor,
-    required bool isPrivate,
-  }) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.line),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
+              const SizedBox(height: 8),
               Text(
-                label,
-                style: const TextStyle(color: AppColors.text3, fontSize: 11),
+                plan['name'] as String? ?? 'Your Spending Plan',
+                style: const TextStyle(color: AppColors.text, fontSize: 24, fontWeight: FontWeight.w800),
               ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(
-                  color: tagColor.withOpacity(0.15),
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Text(
-                  tag,
-                  style: TextStyle(
-                    color: tagColor,
-                    fontSize: 9,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Text(
-            formatCurrency(amount, isPrivate: isPrivate),
-            style: const TextStyle(
-              color: AppColors.text,
-              fontSize: 16,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildCapacityCard({
-    required double totalBudget,
-    required double spentSoFar,
-    required double upcomingBills,
-    required double emergencyReserve,
-    required double availableToSpend,
-    required double burnRatio,
-    required bool isPrivate,
-  }) {
-    return Container(
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppColors.line),
-      ),
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text(
-                'CAPACITY BREAKDOWN',
-                style: TextStyle(
-                  color: AppColors.text3,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 1.1,
-                ),
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                decoration: BoxDecoration(
-                  color: AppColors.surface3,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  'Burn: ${burnRatio.toStringAsFixed(2)}x',
-                  style: const TextStyle(
-                    color: AppColors.text2,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          _buildCapacityRow('Total Planned Budget', totalBudget, isPrivate: isPrivate),
-          _buildCapacityRow('Spent So Far', spentSoFar, isExpense: true, isPrivate: isPrivate),
-          _buildCapacityRow('Upcoming Bills (Reserved)', upcomingBills, isPrivate: isPrivate),
-          _buildCapacityRow('Emergency Buffer (10%)', emergencyReserve, isPrivate: isPrivate),
-          const Divider(color: AppColors.line, height: 16),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text(
-                'Available to Spend',
-                style: TextStyle(
-                  color: AppColors.text,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
+              const SizedBox(height: 16),
               Text(
-                formatCurrency(availableToSpend, isPrivate: isPrivate),
-                style: const TextStyle(
-                  color: AppColors.income,
-                  fontSize: 15,
-                  fontWeight: FontWeight.w800,
+                'You spent ETB ${NumberFormat('#,##0').format(snapshot.totalSpent)} of ${NumberFormat('#,##0').format(snapshot.spendingLimit)} '
+                '(${isUnder ? 'ETB ${NumberFormat('#,##0').format(diff)} under budget' : 'ETB ${NumberFormat('#,##0').format(-diff)} over plan'}).',
+                style: const TextStyle(color: AppColors.text, fontSize: 15, height: 1.4),
+              ),
+              const Divider(color: AppColors.surface2, height: 32),
+              _buildSummaryRow('Period Days', '${snapshot.totalDays} days'),
+              _buildSummaryRow('Emergency Reserve', snapshot.emergencyReserve > 0 ? (snapshot.reserveUsed > 0 ? 'Used ETB ${NumberFormat('#,##0').format(snapshot.reserveUsed)}' : 'Untouched') : 'None set'),
+              _buildSummaryRow('Expected Expenses', 'Paid ETB ${NumberFormat('#,##0').format(snapshot.totalExpectedPaid)} of ${NumberFormat('#,##0').format(snapshot.totalExpected)}'),
+              _buildSummaryRow('Total Not Counted', 'ETB ${NumberFormat('#,##0').format(snapshot.totalNotCountedAmount)} (${snapshot.excludedTransactions.length} txns)'),
+              const SizedBox(height: 24),
+              const Text(
+                'This plan will now be removed so you can start a clean new cycle.',
+                style: TextStyle(color: AppColors.text3, fontSize: 12),
+              ),
+              const SizedBox(height: 20),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.accent,
+                  foregroundColor: AppColors.background,
+                  minimumSize: const Size(double.infinity, 50),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                 ),
+                onPressed: () async {
+                  await ref.read(planControllerProvider).deletePlan(planId);
+                },
+                child: const Text('Close & Create New Plan', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
               ),
             ],
           ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildCapacityRow(
-    String label,
-    double amount, {
-    bool isExpense = false,
-    required bool isPrivate,
-  }) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(
-            label,
-            style: const TextStyle(color: AppColors.text2, fontSize: 12),
-          ),
-          Text(
-            '${isExpense ? '-' : ''}${formatCurrency(amount, isPrivate: isPrivate)}',
-            style: TextStyle(
-              color: isExpense ? AppColors.expense : AppColors.text,
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildPaceChartSection({
-    required int totalDays,
-    required int currentDay,
-    required double budget,
-    required List<double> spentByDay,
-    required bool isPrivate,
-  }) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text(
-          'SPENDING PACE & PROJECTION',
-          style: TextStyle(
-            color: AppColors.text3,
-            fontSize: 11,
-            fontWeight: FontWeight.w700,
-            letterSpacing: 1.1,
-          ),
-        ),
-        const SizedBox(height: 10),
-        PaceChart(
-          totalDays: totalDays,
-          currentDay: currentDay,
-          budget: budget,
-          spentByDay: spentByDay.isNotEmpty
-              ? spentByDay
-              : const [
-                  780.0, 650.0, 920.0, 450.0, 1100.0, 800.0, 600.0,
-                  750.0, 890.0, 950.0, 820.0, 740.0,
-                ],
-          isMasked: isPrivate,
         ),
       ],
     );
   }
 
-  Widget _buildCycleWeeksSection({
-    required List<Map<String, dynamic>> cycleWeeks,
-    required bool isPrivate,
+  Widget _buildSummaryRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 5),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label, style: const TextStyle(color: AppColors.text3, fontSize: 13)),
+          Text(value, style: const TextStyle(color: AppColors.text, fontWeight: FontWeight.w700, fontSize: 13)),
+        ],
+      ),
+    );
+  }
+
+  // ==========================================
+  // 4. ACTIVE DASHBOARD
+  // ==========================================
+  Widget _buildActiveDashboard(
+    BuildContext context,
+    Map<String, dynamic> plan,
+    PlanEvaluationSnapshot snapshot,
+    bool isPrivate, {
+    required bool isPaused,
   }) {
-    final weeks = cycleWeeks.isNotEmpty
-        ? cycleWeeks
-        : [
-            {'title': 'Week 1', 'range': 'Week 1', 'target': 6250.0, 'spent': 5800.0, 'status': 'Done'},
-            {'title': 'Week 2', 'range': 'Week 2', 'target': 6250.0, 'spent': 3650.0, 'status': 'Now'},
-            {'title': 'Week 3', 'range': 'Week 3', 'target': 6250.0, 'spent': 0.0, 'status': 'Upcoming'},
-            {'title': 'Week 4', 'range': 'Week 4', 'target': 6250.0, 'spent': 0.0, 'status': 'Upcoming'},
-          ];
+    final startDate = DateTime.parse(plan['start_date'] as String);
+    final endDate = DateTime.parse(plan['end_date'] as String);
+    final dateRangeStr = '${DateFormat('d MMM').format(startDate)} – ${DateFormat('d MMM yyyy').format(endDate)}';
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text(
-          'CYCLE WEEKS BREAKDOWN',
-          style: TextStyle(
-            color: AppColors.text3,
-            fontSize: 11,
-            fontWeight: FontWeight.w700,
-            letterSpacing: 1.1,
-          ),
-        ),
-        const SizedBox(height: 10),
-        ListView.separated(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          itemCount: weeks.length,
-          separatorBuilder: (_, __) => const SizedBox(height: 8),
-          itemBuilder: (context, index) {
-            final w = weeks[index];
-            final spent = w['spent'] as double;
-            final target = w['target'] as double;
-            final isNow = w['status'] == 'Now';
-            final isDone = w['status'] == 'Done';
-            final ratio = (spent / target).clamp(0.0, 1.0);
+    // 3-Zone dynamic colors
+    Color zoneColor = AppColors.positive;
+    String zoneText = 'Within budget';
+    if (snapshot.zone == PlanBudgetZone.usingReserve) {
+      zoneColor = AppColors.warning;
+      zoneText = 'Using reserve: ${NumberFormat('#,##0').format(snapshot.reserveUsed)} of ${NumberFormat('#,##0').format(snapshot.emergencyReserve)}';
+    } else if (snapshot.zone == PlanBudgetZone.overPlan) {
+      zoneColor = AppColors.negative;
+      zoneText = 'Over plan by ETB ${NumberFormat('#,##0').format(snapshot.overspendAmount)}';
+    }
 
-            return Container(
-              padding: const EdgeInsets.all(12),
+    final double progress = snapshot.spendableBudget > 0
+        ? (snapshot.totalSpent / snapshot.spendableBudget).clamp(0.0, 1.0)
+        : 1.0;
+
+    return RefreshIndicator(
+      color: AppColors.accent,
+      backgroundColor: AppColors.surface,
+      onRefresh: () async {
+        ref.invalidate(activeBudgetPlanStreamProvider);
+        ref.invalidate(allPlanTransactionsStreamProvider);
+      },
+      child: ListView(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        children: [
+          // 1. Paused Banner (if paused)
+          if (isPaused) ...[
+            Container(
+              margin: const EdgeInsets.only(bottom: 14),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
               decoration: BoxDecoration(
-                color: AppColors.surface,
+                color: AppColors.surface2,
                 borderRadius: BorderRadius.circular(14),
-                border: Border.all(
-                  color: isNow ? AppColors.accent.withOpacity(0.5) : AppColors.line,
+                border: Border.all(color: AppColors.text3.withOpacity(0.4)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.pause_circle_outline, color: AppColors.text2, size: 22),
+                  const SizedBox(width: 10),
+                  const Expanded(
+                    child: Text(
+                      'Plan is paused. Daily allowance is frozen.',
+                      style: TextStyle(color: AppColors.text, fontSize: 13, fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: () => ref.read(planControllerProvider).resumePlan(plan['id'] as String),
+                    child: const Text('Resume', style: TextStyle(color: AppColors.accent, fontWeight: FontWeight.w700)),
+                  ),
+                ],
+              ),
+            ),
+          ],
+
+          // 2. Header: Title, Dates, Days Left, Watched Banks Chip & Menu
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      plan['name'] as String? ?? 'Spending Plan',
+                      style: const TextStyle(
+                        color: AppColors.text,
+                        fontSize: 22,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: -0.4,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      '$dateRangeStr · ${snapshot.daysRemaining} days left',
+                      style: const TextStyle(color: AppColors.text3, fontSize: 13, fontWeight: FontWeight.w500),
+                    ),
+                  ],
                 ),
               ),
+              PopupMenuButton<String>(
+                icon: const Icon(Icons.more_vert, color: AppColors.text3),
+                color: AppColors.surface,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                onSelected: (val) => _handleMenuAction(context, plan, val),
+                itemBuilder: (ctx) => [
+                  PopupMenuItem(
+                    value: isPaused ? 'resume' : 'pause',
+                    child: Row(
+                      children: [
+                        Icon(isPaused ? Icons.play_arrow : Icons.pause, size: 18, color: AppColors.text),
+                        const SizedBox(width: 10),
+                        Text(isPaused ? 'Resume Plan' : 'Pause Plan', style: const TextStyle(color: AppColors.text)),
+                      ],
+                    ),
+                  ),
+                  const PopupMenuItem(
+                    value: 'expected_expenses',
+                    child: Row(
+                      children: [
+                        Icon(Icons.receipt_long, size: 18, color: AppColors.text),
+                        const SizedBox(width: 10),
+                        Text('Expected Expenses', style: TextStyle(color: AppColors.text)),
+                      ],
+                    ),
+                  ),
+                  const PopupMenuItem(
+                    value: 'delete',
+                    child: Row(
+                      children: [
+                        Icon(Icons.delete_outline, size: 18, color: AppColors.negative),
+                        const SizedBox(width: 10),
+                        Text('Delete Plan', style: TextStyle(color: AppColors.negative)),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+
+          // 3. Hero Card: Left to Spend + 3-Zone Progress + Tap for Details
+          GestureDetector(
+            onTap: () => _showCalculationBreakdownSheet(context, snapshot),
+            child: Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: AppColors.surface,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: zoneColor.withOpacity(0.3), width: 1.5),
+              ),
               child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Row(
-                        children: [
-                          Text(
-                            w['title'] as String,
-                            style: const TextStyle(
-                              color: AppColors.text,
-                              fontSize: 13,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                          const SizedBox(width: 6),
-                          Text(
-                            w['range'] as String,
-                            style: const TextStyle(color: AppColors.text3, fontSize: 11),
-                          ),
-                        ],
-                      ),
+                      const Text('LEFT TO SPEND', style: TextStyle(color: AppColors.text3, fontSize: 11, fontWeight: FontWeight.w800, letterSpacing: 0.8)),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
                         decoration: BoxDecoration(
-                          color: isNow
-                              ? AppColors.accentBg
-                              : isDone
-                                  ? AppColors.surface3
-                                  : AppColors.surface2,
-                          borderRadius: BorderRadius.circular(6),
+                          color: zoneColor.withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(20),
                         ),
                         child: Text(
-                          w['status'] as String,
-                          style: TextStyle(
-                            color: isNow ? AppColors.accent : AppColors.text3,
-                            fontSize: 10,
-                            fontWeight: FontWeight.w700,
-                          ),
+                          zoneText,
+                          style: TextStyle(color: zoneColor, fontSize: 11, fontWeight: FontWeight.w700),
                         ),
                       ),
                     ],
                   ),
                   const SizedBox(height: 8),
+                  Text(
+                    isPrivate ? '••••••' : 'ETB ${NumberFormat('#,##0').format(snapshot.leftToSpend)}',
+                    style: TextStyle(
+                      color: snapshot.leftToSpend < 0 ? AppColors.negative : AppColors.text,
+                      fontSize: 34,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: -1.0,
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: LinearProgressIndicator(
+                      value: progress,
+                      backgroundColor: AppColors.surface2,
+                      valueColor: AlwaysStoppedAnimation<Color>(zoneColor),
+                      minHeight: 8,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       Text(
-                        '${formatCurrency(spent, isPrivate: isPrivate)} / ${formatCurrency(target, isPrivate: isPrivate)}',
-                        style: const TextStyle(color: AppColors.text2, fontSize: 11),
+                        'Spent: ${NumberFormat('#,##0').format(snapshot.totalSpent)}',
+                        style: const TextStyle(color: AppColors.text3, fontSize: 12),
                       ),
                       Text(
-                        '${(ratio * 100).toInt()}%',
-                        style: const TextStyle(
-                          color: AppColors.text,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
-                        ),
+                        'Budget: ${NumberFormat('#,##0').format(snapshot.spendableBudget)}',
+                        style: const TextStyle(color: AppColors.text3, fontSize: 12),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 6),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(3),
-                    child: LinearProgressIndicator(
-                      value: ratio,
-                      backgroundColor: AppColors.surface3,
-                      valueColor: AlwaysStoppedAnimation<Color>(
-                        spent > target ? AppColors.expense : AppColors.accent,
-                      ),
-                      minHeight: 4,
-                    ),
-                  ),
                 ],
               ),
-            );
-          },
-        ),
-      ],
-    );
-  }
-
-  Widget _buildCategoryEnvelopesSection(
-    BuildContext context,
-    WidgetRef ref,
-    List<Map<String, dynamic>> limits,
-    bool isPrivate,
-  ) {
-    final displayLimits = limits.isNotEmpty
-        ? limits
-        : [
-            {'name': 'Food & Groceries', 'spent': 4200.0, 'limit': 6000.0, 'mode': 'soft'},
-            {'name': 'Dining & Cafes', 'spent': 1850.0, 'limit': 2500.0, 'mode': 'soft'},
-            {'name': 'Transport & Fuel', 'spent': 1900.0, 'limit': 2000.0, 'mode': 'hard'},
-            {'name': 'Entertainment', 'spent': 1500.0, 'limit': 1500.0, 'mode': 'soft'},
-          ];
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            const Text(
-              'CATEGORY ENVELOPES',
-              style: TextStyle(
-                color: AppColors.text3,
-                fontSize: 11,
-                fontWeight: FontWeight.w700,
-                letterSpacing: 1.1,
-              ),
             ),
-            GestureDetector(
-              onTap: () => EnvelopeEditSheet.show(
-                context,
-                onSave: (cat, limit, mode) {
-                  ref.read(planControllerProvider).saveCategoryLimit(
-                        category: cat,
-                        limit: limit,
-                        mode: mode,
-                      );
-                },
-              ),
-              child: const Text(
-                '+ Add',
-                style: TextStyle(
-                  color: AppColors.accent,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
+          ),
+          const SizedBox(height: 14),
+
+          // 4. Today & Tomorrow Allowance Cards
+          Row(
+            children: [
+              Expanded(
+                child: Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(color: AppColors.surface, borderRadius: BorderRadius.circular(16)),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('TODAY\'S ALLOWANCE', style: TextStyle(color: AppColors.text3, fontSize: 10, fontWeight: FontWeight.w800)),
+                      const SizedBox(height: 6),
+                      Text(
+                        isPrivate ? '••••' : 'ETB ${NumberFormat('#,##0').format(snapshot.todayRemaining)}',
+                        style: const TextStyle(color: AppColors.text, fontSize: 18, fontWeight: FontWeight.w800),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'of ${NumberFormat('#,##0').format(snapshot.todayAllowance)} allowance',
+                        style: const TextStyle(color: AppColors.text3, fontSize: 11),
+                      ),
+                    ],
+                  ),
                 ),
               ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 10),
-        ListView.separated(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          itemCount: displayLimits.length,
-          separatorBuilder: (_, __) => const SizedBox(height: 8),
-          itemBuilder: (context, index) {
-            final env = displayLimits[index];
-            final name = (env['name'] ?? env['category_name'] ?? 'Category') as String;
-            final spent = (env['spent'] as num?)?.toDouble() ?? 0.0;
-            final limit = (env['limit'] ?? env['amount'] as num?)?.toDouble() ?? 1000.0;
-            final isHard = (env['mode'] ?? env['limit_type'] ?? '') == 'hard';
-            final envId = env['id'] as String?;
-
-            return GestureDetector(
-              onTap: () => EnvelopeEditSheet.show(
-                context,
-                envelope: env,
-                onSave: (cat, limit, mode) {
-                  ref.read(planControllerProvider).saveCategoryLimit(
-                        category: cat,
-                        limit: limit,
-                        mode: mode,
-                        id: envId,
-                      );
-                },
-                onDelete: envId != null
-                    ? () => ref.read(planControllerProvider).deleteLimit(envId)
-                    : null,
-              ),
-              child: Container(
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: AppColors.surface,
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: AppColors.line),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(color: AppColors.surface, borderRadius: BorderRadius.circular(16)),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('TOMORROW', style: TextStyle(color: AppColors.text3, fontSize: 10, fontWeight: FontWeight.w800)),
+                      const SizedBox(height: 6),
+                      Text(
+                        isPrivate ? '••••' : 'ETB ${NumberFormat('#,##0').format(snapshot.tomorrowAllowance)}',
+                        style: const TextStyle(color: AppColors.text, fontSize: 18, fontWeight: FontWeight.w800),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        '${snapshot.tomorrowPctOfNormal.toStringAsFixed(0)}% of normal day',
+                        style: const TextStyle(color: AppColors.accent, fontSize: 11, fontWeight: FontWeight.w600),
+                      ),
+                    ],
+                  ),
                 ),
-                child: Column(
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+
+          // 5. Pace & Runway Indicator
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(color: AppColors.surface, borderRadius: BorderRadius.circular(14)),
+            child: Row(
+              children: [
+                Icon(
+                  snapshot.paceStatus == 'under'
+                      ? Icons.trending_down
+                      : snapshot.paceStatus == 'over'
+                          ? Icons.trending_up
+                          : Icons.trending_flat,
+                  color: snapshot.paceStatus == 'under'
+                      ? AppColors.positive
+                      : snapshot.paceStatus == 'over'
+                          ? AppColors.negative
+                          : AppColors.accent,
+                  size: 20,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    snapshot.paceStatus == 'over'
+                        ? (snapshot.projectedRunwayDate != null
+                            ? 'At this pace your budget runs out around ${DateFormat('d MMMM').format(snapshot.projectedRunwayDate!)}'
+                            : 'Spending is faster than planned daily pace')
+                        : snapshot.paceStatus == 'under'
+                            ? 'You are spending under pace. Savings are smoothing into tomorrow.'
+                            : 'You are on track with your planned pace.',
+                    style: const TextStyle(color: AppColors.text, fontSize: 12, fontWeight: FontWeight.w500),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 18),
+
+          // 6. Expected Expenses Card (Section 8.3)
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(color: AppColors.surface, borderRadius: BorderRadius.circular(18)),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Row(
-                          children: [
-                            Text(
-                              name,
-                              style: const TextStyle(
-                                color: AppColors.text,
-                                fontSize: 13,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                            const SizedBox(width: 6),
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-                              decoration: BoxDecoration(
-                                color: isHard ? AppColors.expenseBg : AppColors.surface2,
-                                borderRadius: BorderRadius.circular(4),
-                              ),
-                              child: Text(
-                                isHard ? 'HARD' : 'SOFT',
-                                style: TextStyle(
-                                  color: isHard ? AppColors.expense : AppColors.text3,
-                                  fontSize: 9,
-                                  fontWeight: FontWeight.w800,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        Text(
-                          '${formatCurrency(spent, isPrivate: isPrivate)} / ${formatCurrency(limit, isPrivate: isPrivate)}',
-                          style: const TextStyle(
-                            color: AppColors.text2,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 10),
-                    TickBar(
-                      spent: spent,
-                      limit: limit,
-                      tickPercents: const [0.50, 0.80],
+                    const Text('EXPECTED EXPENSES', style: TextStyle(color: AppColors.text, fontSize: 14, fontWeight: FontWeight.w800)),
+                    TextButton.icon(
+                      icon: const Icon(Icons.add, size: 15, color: AppColors.accent),
+                      label: const Text('Add', style: TextStyle(color: AppColors.accent, fontSize: 12, fontWeight: FontWeight.w700)),
+                      onPressed: () => _showAddExpectedExpenseSheet(context, plan['id'] as String),
                     ),
                   ],
                 ),
-              ),
-            );
-          },
-        ),
-      ],
-    );
-  }
-
-  Widget _buildUpcomingBillsSection(BuildContext context, bool isPrivate) {
-    final bills = [
-      {'name': 'Ethio Telecom Fibre', 'amount': 1400.0, 'due': 'In 4 days'},
-      {'name': 'Gym Membership', 'amount': 450.0, 'due': 'In 9 days'},
-    ];
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text(
-          'UPCOMING BILLS',
-          style: TextStyle(
-            color: AppColors.text3,
-            fontSize: 11,
-            fontWeight: FontWeight.w700,
-            letterSpacing: 1.1,
-          ),
-        ),
-        const SizedBox(height: 10),
-        ListView.separated(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          itemCount: bills.length,
-          separatorBuilder: (_, __) => const SizedBox(height: 8),
-          itemBuilder: (context, index) {
-            final b = bills[index];
-            final amount = b['amount'] as double;
-
-            return Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-              decoration: BoxDecoration(
-                color: AppColors.surface,
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: AppColors.line),
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.calendar_today_outlined, color: AppColors.accent, size: 18),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          b['name'] as String,
-                          style: const TextStyle(
-                            color: AppColors.text,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        Text(
-                          b['due'] as String,
-                          style: const TextStyle(color: AppColors.text3, fontSize: 11),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Text(
-                    formatCurrency(amount, isPrivate: isPrivate),
-                    style: const TextStyle(
-                      color: AppColors.text,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                    decoration: BoxDecoration(
-                      color: AppColors.surface2,
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: AppColors.line),
-                    ),
-                    child: const Text(
-                      'Paid',
-                      style: TextStyle(
-                        color: AppColors.income,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            );
-          },
-        ),
-      ],
-    );
-  }
-
-  Widget _buildSavingGoalsSection(
-    BuildContext context,
-    WidgetRef ref,
-    List<Map<String, dynamic>> goals,
-    bool isPrivate,
-  ) {
-    final displayGoals = goals.isNotEmpty
-        ? goals
-        : [
-            {'title': 'Emergency Fund', 'current': 45000.0, 'target': 60000.0, 'monthly': 2500.0},
-            {'title': 'New Laptop', 'current': 32000.0, 'target': 85000.0, 'monthly': 4000.0},
-          ];
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            const Text(
-              'SAVING GOALS',
-              style: TextStyle(
-                color: AppColors.text3,
-                fontSize: 11,
-                fontWeight: FontWeight.w700,
-                letterSpacing: 1.1,
-              ),
-            ),
-            GestureDetector(
-              onTap: () => GoalEditSheet.show(
-                context,
-                onCreate: (name, target, date) {
-                  ref.read(planControllerProvider).saveSavingPlan(
-                        name: name,
-                        targetAmount: target,
-                        targetDate: DateTime.tryParse(date) ??
-                            DateTime.now().add(const Duration(days: 180)),
-                      );
-                },
-              ),
-              child: const Text(
-                '+ New Goal',
-                style: TextStyle(
-                  color: AppColors.accent,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
+                Text(
+                  'Expected: ${NumberFormat('#,##0').format(snapshot.totalExpected)} · '
+                  'Paid: ${NumberFormat('#,##0').format(snapshot.totalExpectedPaid)} · '
+                  'To pay: ${NumberFormat('#,##0').format(snapshot.totalExpectedToPay)}',
+                  style: const TextStyle(color: AppColors.text3, fontSize: 12),
                 ),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 10),
-        ListView.separated(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          itemCount: displayGoals.length,
-          separatorBuilder: (_, __) => const SizedBox(height: 8),
-          itemBuilder: (context, index) {
-            final g = displayGoals[index];
-            final title = (g['title'] ?? g['plan_name'] ?? 'Saving Goal') as String;
-            final current = (g['current'] ?? g['current_amount'] as num?)?.toDouble() ?? 0.0;
-            final target = (g['target'] ?? g['target_amount'] as num?)?.toDouble() ?? 10000.0;
-            final monthly = (g['monthly'] as num?)?.toDouble() ?? 1000.0;
-            final ratio = target > 0 ? (current / target).clamp(0.0, 1.0) : 0.0;
-            final goalId = (g['id'] as String?) ?? '';
+                const SizedBox(height: 12),
+                if (snapshot.expectedExpenses.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 8),
+                    child: Text('No expected expenses. Known costs (rent, school fee) sit outside your limit.', style: TextStyle(color: AppColors.text3, fontSize: 12)),
+                  )
+                else
+                  ...snapshot.expectedExpenses.map((exp) {
+                    final id = exp['id'] as String;
+                    final name = exp['name'] as String? ?? 'Expense';
+                    final amount = (exp['amount'] as num).toDouble();
+                    final isPaid = (exp['status'] as String? ?? '').toLowerCase() == 'paid';
+                    final due = exp['due_date'] as String?;
 
-            return GestureDetector(
-              onTap: () => GoalEditSheet.show(
-                context,
-                goal: g,
-                onFund: (amountAdded) {
-                  if (goalId.isNotEmpty) {
-                    ref.read(planControllerProvider).fundSavingPlan(goalId, amountAdded);
-                  }
-                },
-              ),
-              child: Container(
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: AppColors.surface,
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: AppColors.line),
-                ),
-                child: Row(
-                  children: [
-                    ProgressRing(
-                      progress: ratio,
-                      size: 48,
-                      strokeWidth: 5,
-                      progressColor: AppColors.income,
-                      centerChild: Text(
-                        '${(ratio * 100).toInt()}%',
-                        style: const TextStyle(
-                          color: AppColors.text,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 6),
+                      child: Row(
                         children: [
-                          Text(
-                            title,
-                            style: const TextStyle(
-                              color: AppColors.text,
-                              fontSize: 13,
+                          GestureDetector(
+                            onTap: () => ref.read(planControllerProvider).toggleExpectedExpensePaid(id, isPaid),
+                            child: Icon(
+                              isPaid ? Icons.check_circle : Icons.radio_button_unchecked,
+                              color: isPaid ? AppColors.positive : AppColors.text3,
+                              size: 20,
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  name,
+                                  style: TextStyle(
+                                    color: isPaid ? AppColors.text3 : AppColors.text,
+                                    fontWeight: FontWeight.w600,
+                                    decoration: isPaid ? TextDecoration.lineThrough : null,
+                                  ),
+                                ),
+                                if (due != null)
+                                  Text('Due: $due', style: const TextStyle(color: AppColors.text3, fontSize: 11)),
+                              ],
+                            ),
+                          ),
+                          Text('ETB ${NumberFormat('#,##0').format(amount)}', style: const TextStyle(color: AppColors.text, fontWeight: FontWeight.w700)),
+                        ],
+                      ),
+                    );
+                  }),
+              ],
+            ),
+          ),
+          const SizedBox(height: 18),
+
+          // 7. Weekly Chunks View (7-Day Target vs Spent)
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(color: AppColors.surface, borderRadius: BorderRadius.circular(18)),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('WEEKLY BREAKDOWN', style: TextStyle(color: AppColors.text, fontSize: 14, fontWeight: FontWeight.w800)),
+                const SizedBox(height: 12),
+                ...snapshot.weeklyChunks.map((w) {
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 6),
+                    child: Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: w.status == 'Now'
+                                ? AppColors.accent.withOpacity(0.15)
+                                : AppColors.surface2,
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            'W${w.weekNumber}',
+                            style: TextStyle(
+                              color: w.status == 'Now' ? AppColors.accent : AppColors.text3,
+                              fontSize: 11,
                               fontWeight: FontWeight.w700,
                             ),
                           ),
-                          const SizedBox(height: 2),
-                          Text(
-                            '${formatCurrency(current, isPrivate: isPrivate)} of ${formatCurrency(target, isPrivate: isPrivate)}',
-                            style: const TextStyle(color: AppColors.text3, fontSize: 11),
-                          ),
-                          Text(
-                            'Required: ${formatCurrency(monthly, isPrivate: isPrivate)}/mo',
-                            style: const TextStyle(
-                              color: AppColors.accent,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                      decoration: BoxDecoration(
-                        color: AppColors.accentBg,
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: const Text(
-                        'Add',
-                        style: TextStyle(
-                          color: AppColors.accent,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700,
                         ),
-                      ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(w.label, style: const TextStyle(color: AppColors.text, fontSize: 12, fontWeight: FontWeight.w600)),
+                              Text('Target: ${NumberFormat('#,##0').format(w.plannedTarget)}', style: const TextStyle(color: AppColors.text3, fontSize: 11)),
+                            ],
+                          ),
+                        ),
+                        Text(
+                          'Spent: ${NumberFormat('#,##0').format(w.spent)}',
+                          style: TextStyle(
+                            color: w.spent > w.plannedTarget ? AppColors.negative : AppColors.text,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 13,
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                }),
+              ],
+            ),
+          ),
+          const SizedBox(height: 18),
+
+          // 8. Spending Chart (PaceChart)
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(color: AppColors.surface, borderRadius: BorderRadius.circular(18)),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('IDEAL VS ACTUAL SPENDING', style: TextStyle(color: AppColors.text, fontSize: 14, fontWeight: FontWeight.w800)),
+                const SizedBox(height: 12),
+                SizedBox(
+                  height: 140,
+                  child: PaceChart(
+                    dailySpends: snapshot.weeklyChunks.map((w) => w.spent).toList(),
+                    totalBudget: snapshot.spendableBudget,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 18),
+
+          // 9. Not Counted Breakdown Banner & List (Section 5)
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(color: AppColors.surface, borderRadius: BorderRadius.circular(18)),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('NOT COUNTED IN PLAN', style: TextStyle(color: AppColors.text, fontSize: 14, fontWeight: FontWeight.w800)),
+                        const SizedBox(height: 2),
+                        Text(
+                          'Total: ETB ${NumberFormat('#,##0').format(snapshot.totalNotCountedAmount)} (${snapshot.excludedTransactions.length} txns)',
+                          style: const TextStyle(color: AppColors.text3, fontSize: 12),
+                        ),
+                      ],
+                    ),
+                    IconButton(
+                      icon: Icon(_notCountedExpanded ? Icons.expand_less : Icons.expand_more, color: AppColors.accent),
+                      onPressed: () => setState(() => _notCountedExpanded = !_notCountedExpanded),
                     ),
                   ],
                 ),
-              ),
-            );
-          },
+                if (_notCountedExpanded) ...[
+                  const Divider(color: AppColors.surface2, height: 20),
+                  ...snapshot.excludedTransactions.map((t) {
+                    return Container(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(color: AppColors.surface2, borderRadius: BorderRadius.circular(10)),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  t.counterparty ?? t.type.toUpperCase(),
+                                  style: const TextStyle(color: AppColors.text, fontWeight: FontWeight.w600, fontSize: 13),
+                                ),
+                                const SizedBox(height: 2),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: AppColors.surface3,
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  child: Text(
+                                    t.exclusionReason ?? 'Excluded',
+                                    style: const TextStyle(color: AppColors.accent, fontSize: 10, fontWeight: FontWeight.w600),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          Text('ETB ${NumberFormat('#,##0').format(t.amount)}', style: const TextStyle(color: AppColors.text, fontWeight: FontWeight.w700)),
+                          IconButton(
+                            icon: const Icon(Icons.undo, size: 16, color: AppColors.text3),
+                            tooltip: 'Count in plan',
+                            onPressed: () {
+                              ref.read(planControllerProvider).toggleTransactionPlanExclusion(t.id, exclude: false);
+                            },
+                          ),
+                        ],
+                      ),
+                    );
+                  }),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(height: 18),
+
+          // 10. Your Rules Summary Pill
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(color: AppColors.surface, borderRadius: BorderRadius.circular(12)),
+            child: Row(
+              children: [
+                const Icon(Icons.tune, color: AppColors.text3, size: 18),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'Rules: ${plan['reaction_mode'] == 'adaptive' ? 'Adaptive rebalancing' : 'Fixed daily allowance'} · '
+                    '${plan['count_fees'] == 1 ? 'Fees counted' : 'Fees omitted'} · '
+                    '${plan['count_withdrawals'] == 1 ? 'Cash counted' : 'Cash omitted'}',
+                    style: const TextStyle(color: AppColors.text3, fontSize: 12),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 80), // Padding for FloatingActionButton
+        ],
+      ),
+    );
+  }
+
+  // --- MODAL SHEETS & ACTIONS ---
+
+  void _showCalculationBreakdownSheet(BuildContext context, PlanEvaluationSnapshot snapshot) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppColors.surface,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) => Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('How Your Plan is Calculated', style: TextStyle(color: AppColors.text, fontSize: 18, fontWeight: FontWeight.w800)),
+            const SizedBox(height: 16),
+            _buildCalcRow('Everyday Spending Limit', 'ETB ${NumberFormat('#,##0').format(snapshot.spendingLimit)}'),
+            if (snapshot.emergencyReserve > 0)
+              _buildCalcRow('− Emergency Reserve', 'ETB ${NumberFormat('#,##0').format(snapshot.emergencyReserve)}'),
+            _buildCalcRow('= Spendable Budget', 'ETB ${NumberFormat('#,##0').format(snapshot.spendableBudget)}'),
+            _buildCalcRow('− Counted Spending', 'ETB ${NumberFormat('#,##0').format(snapshot.totalSpent)}'),
+            const Divider(color: AppColors.surface2, height: 24),
+            _buildCalcRow('Left to Spend', 'ETB ${NumberFormat('#,##0').format(snapshot.leftToSpend)}', isBold: true),
+            const SizedBox(height: 12),
+            Text(
+              'Expected expenses (${NumberFormat('#,##0').format(snapshot.totalExpected)}) sit outside this number and do not change it.',
+              style: const TextStyle(color: AppColors.text3, fontSize: 12),
+            ),
+          ],
         ),
-      ],
+      ),
+    );
+  }
+
+  Widget _buildCalcRow(String label, String value, {bool isBold = false}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label, style: TextStyle(color: isBold ? AppColors.text : AppColors.text3, fontWeight: isBold ? FontWeight.w700 : FontWeight.w500)),
+          Text(value, style: TextStyle(color: isBold ? AppColors.accent : AppColors.text, fontWeight: FontWeight.w700)),
+        ],
+      ),
+    );
+  }
+
+  void _showAddExpectedExpenseSheet(BuildContext context, String planId) {
+    final nameCtrl = TextEditingController();
+    final amountCtrl = TextEditingController();
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: AppColors.surface,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) => Padding(
+        padding: EdgeInsets.only(
+          left: 20, right: 20, top: 20,
+          bottom: MediaQuery.of(ctx).viewInsets.bottom + 20,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Add Expected Expense', style: TextStyle(color: AppColors.text, fontSize: 18, fontWeight: FontWeight.w800)),
+            const SizedBox(height: 14),
+            TextField(
+              controller: nameCtrl,
+              style: const TextStyle(color: AppColors.text),
+              decoration: InputDecoration(
+                hintText: 'Name (e.g. House rent, School fees)',
+                filled: true,
+                fillColor: AppColors.surface2,
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: amountCtrl,
+              keyboardType: TextInputType.number,
+              style: const TextStyle(color: AppColors.text),
+              decoration: InputDecoration(
+                hintText: 'Amount (ETB)',
+                filled: true,
+                fillColor: AppColors.surface2,
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+              ),
+            ),
+            const SizedBox(height: 16),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.accent,
+                foregroundColor: AppColors.background,
+                minimumSize: const Size(double.infinity, 48),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+              onPressed: () {
+                final name = nameCtrl.text.trim();
+                final amt = double.tryParse(amountCtrl.text.trim()) ?? 0.0;
+                if (name.isNotEmpty && amt > 0) {
+                  ref.read(planControllerProvider).addExpectedExpense(
+                    planId: planId,
+                    name: name,
+                    amount: amt,
+                  );
+                  Navigator.of(ctx).pop();
+                }
+              },
+              child: const Text('Add to Plan', style: TextStyle(fontWeight: FontWeight.w700)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _handleMenuAction(BuildContext context, Map<String, dynamic> plan, String action) {
+    final planId = plan['id'] as String;
+    switch (action) {
+      case 'pause':
+        ref.read(planControllerProvider).pausePlan(planId);
+        break;
+      case 'resume':
+        ref.read(planControllerProvider).resumePlan(planId);
+        break;
+      case 'expected_expenses':
+        _showAddExpectedExpenseSheet(context, planId);
+        break;
+      case 'delete':
+        _confirmDeletePlan(context, planId);
+        break;
+    }
+  }
+
+  void _confirmDeletePlan(BuildContext context, String planId) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        title: const Text('Delete this plan?', style: TextStyle(color: AppColors.text)),
+        content: const Text(
+          'Your transactions are not affected. You will have 8 seconds to undo.',
+          style: TextStyle(color: AppColors.text3),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cancel', style: TextStyle(color: AppColors.text3)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.negative),
+            onPressed: () async {
+              Navigator.of(ctx).pop();
+              final backupPlan = ref.read(activeBudgetPlanStreamProvider).value;
+              await ref.read(planControllerProvider).deletePlan(planId);
+
+              // 8-second animated undo snackbar
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    duration: const Duration(seconds: 8),
+                    backgroundColor: AppColors.surface,
+                    content: const Text('Plan deleted', style: TextStyle(color: AppColors.text)),
+                    action: SnackBarAction(
+                      label: 'Undo',
+                      textColor: AppColors.accent,
+                      onPressed: () {
+                        if (backupPlan != null) {
+                          ref.read(planControllerProvider).createPlan(
+                            name: backupPlan['name'] as String,
+                            periodType: backupPlan['period_type'] as String,
+                            startDate: DateTime.parse(backupPlan['start_date'] as String),
+                            endDate: DateTime.parse(backupPlan['end_date'] as String),
+                            spendingLimit: (backupPlan['spending_limit'] as num).toDouble(),
+                          );
+                        }
+                      },
+                    ),
+                  ),
+                );
+              }
+            },
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
     );
   }
 }

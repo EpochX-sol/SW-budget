@@ -21,6 +21,8 @@ class LocalTransactions extends Table {
   BoolColumn get balanceChainOk => boolean().nullable()();
   RealColumn get gapBeforeAmount => real().nullable()();
   BoolColumn get needsReview => boolean().withDefault(const Constant(false))();
+  BoolColumn get excludeFromPlan => boolean().withDefault(const Constant(false))();
+  TextColumn get planExclusionReason => text().nullable()();
 
   // Sync state
   IntColumn get changeSeq => integer().withDefault(const Constant(0))();

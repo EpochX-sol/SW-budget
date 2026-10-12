@@ -78,11 +78,55 @@ export const spendingPlanRoutes: FastifyPluginAsync = async (fastify: FastifyIns
     return reply.status(200).send(result);
   });
 
-  // POST /v1/plans/:id/fixed-expenses - Add fixed commitment
-  fastify.post('/v1/plans/:id/fixed-expenses', async (request, reply) => {
+  // POST /v1/plans/:id/pause - Pause plan
+  fastify.post('/v1/plans/:id/pause', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const result = await spendingPlanService.pausePlan(request.user.id, id);
+    return reply.status(200).send(result);
+  });
+
+  // POST /v1/plans/:id/resume - Resume plan
+  fastify.post('/v1/plans/:id/resume', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const result = await spendingPlanService.resumePlan(request.user.id, id);
+    return reply.status(200).send(result);
+  });
+
+  // Expected expenses endpoints (fixed-expenses and expected-expenses alias)
+  const handleAddExpense = async (request: any, reply: any) => {
     const { id } = request.params as { id: string };
     const input = createFixedExpenseSchema.parse(request.body);
     const result = await spendingPlanService.addFixedExpense(request.user.id, id, input);
     return reply.status(201).send(result);
-  });
+  };
+  fastify.post('/v1/plans/:id/fixed-expenses', handleAddExpense);
+  fastify.post('/v1/plans/:id/expected-expenses', handleAddExpense);
+
+  const handleUpdateExpense = async (request: any, reply: any) => {
+    const { id, expenseId } = request.params as { id: string; expenseId: string };
+    const input = request.body as any;
+    const result = await spendingPlanService.updateFixedExpense(request.user.id, id, expenseId, input);
+    return reply.status(200).send(result);
+  };
+  fastify.patch('/v1/plans/:id/fixed-expenses/:expenseId', handleUpdateExpense);
+  fastify.patch('/v1/plans/:id/expected-expenses/:expenseId', handleUpdateExpense);
+
+  const handleDeleteExpense = async (request: any, reply: any) => {
+    const { id, expenseId } = request.params as { id: string; expenseId: string };
+    const result = await spendingPlanService.deleteFixedExpense(request.user.id, id, expenseId);
+    return reply.status(200).send(result);
+  };
+  fastify.delete('/v1/plans/:id/fixed-expenses/:expenseId', handleDeleteExpense);
+  fastify.delete('/v1/plans/:id/expected-expenses/:expenseId', handleDeleteExpense);
+
+  const handleMarkPaid = async (request: any, reply: any) => {
+    const { id, expenseId } = request.params as { id: string; expenseId: string };
+    const body = (request.body || {}) as { paid?: boolean; paid_txn_id?: string };
+    const paid = body.paid !== undefined ? body.paid : true;
+    const result = await spendingPlanService.markFixedExpensePaid(request.user.id, id, expenseId, paid, body.paid_txn_id);
+    return reply.status(200).send(result);
+  };
+  fastify.post('/v1/plans/:id/fixed-expenses/:expenseId/mark-paid', handleMarkPaid);
+  fastify.post('/v1/plans/:id/expected-expenses/:expenseId/mark-paid', handleMarkPaid);
 };
+

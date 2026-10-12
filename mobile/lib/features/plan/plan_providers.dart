@@ -6,6 +6,76 @@ import '../../data/local/app_database.dart';
 import '../../data/local/database_provider.dart';
 import '../../data/sync/sync_provider.dart';
 import '../../domain/use_cases/budget_math_service.dart';
+import '../../domain/use_cases/plan_evaluation_engine.dart';
+
+/// Reactive stream of the single active budget plan
+final activeBudgetPlanStreamProvider = StreamProvider<Map<String, dynamic>?>((ref) async* {
+  final db = await ref.watch(databaseProvider.future);
+  yield db.getActiveBudgetPlan();
+
+  await for (final event in db.onTableChanged) {
+    if (event == DatabaseTable.budgetPlans) {
+      yield db.getActiveBudgetPlan();
+    }
+  }
+});
+
+/// Reactive stream of expected expenses for the active plan
+final expectedExpensesStreamProvider = StreamProvider<List<Map<String, dynamic>>>((ref) async* {
+  final db = await ref.watch(databaseProvider.future);
+  final activePlan = ref.watch(activeBudgetPlanStreamProvider).value;
+  if (activePlan == null) {
+    yield const [];
+    return;
+  }
+
+  final planId = activePlan['id'] as String;
+  yield db.getExpectedExpensesForPlan(planId);
+
+  await for (final event in db.onTableChanged) {
+    if (event == DatabaseTable.expectedExpenses || event == DatabaseTable.budgetPlans) {
+      final curPlan = db.getActiveBudgetPlan();
+      if (curPlan != null) {
+        yield db.getExpectedExpensesForPlan(curPlan['id'] as String);
+      } else {
+        yield const [];
+      }
+    }
+  }
+});
+
+/// Reactive stream of all local transactions
+final allPlanTransactionsStreamProvider = StreamProvider<List<Map<String, dynamic>>>((ref) async* {
+  final db = await ref.watch(databaseProvider.future);
+  yield db.getTransactions(limit: 2000);
+
+  await for (final event in db.onTableChanged) {
+    if (event == DatabaseTable.transactions) {
+      yield db.getTransactions(limit: 2000);
+    }
+  }
+});
+
+/// Computed reactive snapshot of the plan under the v2 deterministic engine
+final planEvaluationSnapshotProvider = Provider<PlanEvaluationSnapshot?>((ref) {
+  final activePlanAsync = ref.watch(activeBudgetPlanStreamProvider);
+  final expectedExpensesAsync = ref.watch(expectedExpensesStreamProvider);
+  final transactionsAsync = ref.watch(allPlanTransactionsStreamProvider);
+
+  final activePlan = activePlanAsync.value;
+  if (activePlan == null) return null;
+
+  final expectedExpenses = expectedExpensesAsync.value ?? const [];
+  final rawTransactions = transactionsAsync.value ?? const [];
+
+  return PlanEvaluationEngine.evaluate(
+    plan: activePlan,
+    expectedExpenses: expectedExpenses,
+    rawTransactions: rawTransactions,
+  );
+});
+
+// --- LEGACY COMPATIBILITY PROVIDERS ---
 
 final limitsStreamProvider = StreamProvider<List<Map<String, dynamic>>>((ref) async* {
   final db = await ref.watch(databaseProvider.future);
@@ -29,7 +99,6 @@ final savingPlansStreamProvider = StreamProvider<List<Map<String, dynamic>>>((re
   }
 });
 
-/// Computes monthly spending totals across categories from local transaction records
 final currentMonthSpendSummaryProvider = StreamProvider<Map<String, double>>((ref) async* {
   final db = await ref.watch(databaseProvider.future);
 
@@ -39,16 +108,12 @@ final currentMonthSpendSummaryProvider = StreamProvider<Map<String, double>>((re
     final txns = db.getTransactions(limit: 1000);
 
     final Map<String, double> totals = {'_total_expense': 0.0};
-
     for (final t in txns) {
       if ((t['type'] as String? ?? '').toLowerCase() != 'expense') continue;
-
       final occurred = DateTime.tryParse(t['occurred_at'] as String? ?? '');
       if (occurred == null || occurred.isBefore(firstDayOfMonth)) continue;
-
       final amount = (t['amount'] as num?)?.toDouble() ?? 0.0;
       totals['_total_expense'] = (totals['_total_expense'] ?? 0.0) + amount;
-
       final catId = t['category_id'] as String? ?? 'uncategorized';
       totals[catId] = (totals[catId] ?? 0.0) + amount;
     }
@@ -56,7 +121,6 @@ final currentMonthSpendSummaryProvider = StreamProvider<Map<String, double>>((re
   }
 
   yield computeTotals();
-
   await for (final event in db.onTableChanged) {
     if (event == DatabaseTable.transactions) {
       yield computeTotals();
@@ -64,14 +128,12 @@ final currentMonthSpendSummaryProvider = StreamProvider<Map<String, double>>((re
   }
 });
 
-/// Daily spending array for the current month up to today (for PaceChart)
 final currentMonthDailySpendProvider = StreamProvider<List<double>>((ref) async* {
   final db = await ref.watch(databaseProvider.future);
 
   List<double> computeDaily() {
     final now = DateTime.now();
     final daily = List<double>.filled(now.day, 0.0);
-
     final txns = db.getTransactions(limit: 1000);
     for (final t in txns) {
       if ((t['type'] as String? ?? '').toLowerCase() != 'expense') continue;
@@ -87,7 +149,6 @@ final currentMonthDailySpendProvider = StreamProvider<List<double>>((ref) async*
   }
 
   yield computeDaily();
-
   await for (final event in db.onTableChanged) {
     if (event == DatabaseTable.transactions) {
       yield computeDaily();
@@ -95,126 +156,254 @@ final currentMonthDailySpendProvider = StreamProvider<List<double>>((ref) async*
   }
 });
 
-/// 4-week cycle spending provider
 final cycleWeeksSpendProvider = StreamProvider<List<Map<String, dynamic>>>((ref) async* {
+  final snapshot = ref.watch(planEvaluationSnapshotProvider);
+  if (snapshot != null) {
+    yield snapshot.weeklyChunks.map((w) => {
+      'title': 'Week ${w.weekNumber}',
+      'range': w.label,
+      'target': w.plannedTarget,
+      'spent': w.spent,
+      'status': w.status,
+    }).toList();
+    return;
+  }
+
   final db = await ref.watch(databaseProvider.future);
-
-  List<Map<String, dynamic>> computeWeeks() {
-    final now = DateTime.now();
-    final today = now.day;
-    final daysInMonth = DateTime(now.year, now.month + 1, 0).day;
-    final txns = db.getTransactions(limit: 1000);
-
-    double w1Spent = 0.0;
-    double w2Spent = 0.0;
-    double w3Spent = 0.0;
-    double w4Spent = 0.0;
-
-    for (final t in txns) {
-      if ((t['type'] as String? ?? '').toLowerCase() != 'expense') continue;
-      final occurred = DateTime.tryParse(t['occurred_at'] as String? ?? '');
-      if (occurred == null || occurred.year != now.year || occurred.month != now.month) continue;
-      final day = occurred.day;
-      final amt = (t['amount'] as num?)?.toDouble() ?? 0.0;
-
-      if (day <= 7) {
-        w1Spent += amt;
-      } else if (day <= 14) {
-        w2Spent += amt;
-      } else if (day <= 21) {
-        w3Spent += amt;
-      } else {
-        w4Spent += amt;
-      }
-    }
-
-    final monthName = DateFormat('MMM').format(now);
-    return [
-      {
-        'title': 'Week 1',
-        'range': '$monthName 1 - 7',
-        'target': 6250.0,
-        'spent': w1Spent,
-        'status': today > 7 ? 'Done' : 'Now',
-      },
-      {
-        'title': 'Week 2',
-        'range': '$monthName 8 - 14',
-        'target': 6250.0,
-        'spent': w2Spent,
-        'status': today > 14 ? 'Done' : (today >= 8 ? 'Now' : 'Upcoming'),
-      },
-      {
-        'title': 'Week 3',
-        'range': '$monthName 15 - 21',
-        'target': 6250.0,
-        'spent': w3Spent,
-        'status': today > 21 ? 'Done' : (today >= 15 ? 'Now' : 'Upcoming'),
-      },
-      {
-        'title': 'Week 4',
-        'range': '$monthName 22 - $daysInMonth',
-        'target': 6250.0,
-        'spent': w4Spent,
-        'status': today >= 22 ? 'Now' : 'Upcoming',
-      },
-    ];
-  }
-
-  yield computeWeeks();
-
-  await for (final event in db.onTableChanged) {
-    if (event == DatabaseTable.transactions) {
-      yield computeWeeks();
-    }
-  }
+  final now = DateTime.now();
+  final daysInMonth = DateTime(now.year, now.month + 1, 0).day;
+  final monthName = DateFormat('MMM').format(now);
+  yield [
+    {'title': 'Week 1', 'range': '$monthName 1 - 7', 'target': 6250.0, 'spent': 0.0, 'status': 'Now'},
+    {'title': 'Week 2', 'range': '$monthName 8 - 14', 'target': 6250.0, 'spent': 0.0, 'status': 'Upcoming'},
+    {'title': 'Week 3', 'range': '$monthName 15 - 21', 'target': 6250.0, 'spent': 0.0, 'status': 'Upcoming'},
+    {'title': 'Week 4', 'range': '$monthName 22 - $daysInMonth', 'target': 6250.0, 'spent': 0.0, 'status': 'Upcoming'},
+  ];
 });
 
-/// Safe-to-Spend reactive calculation provider
 final safeToSpendProvider = Provider<SafeToSpendSummary>((ref) {
+  final snapshot = ref.watch(planEvaluationSnapshotProvider);
+  if (snapshot != null) {
+    SpendingPace pace = SpendingPace.onTrack;
+    if (snapshot.paceStatus == 'under') pace = SpendingPace.ahead;
+    if (snapshot.paceStatus == 'over') pace = SpendingPace.caution;
+    if (snapshot.zone == PlanBudgetZone.overPlan) pace = SpendingPace.deficit;
+
+    return SafeToSpendSummary(
+      totalBudget: snapshot.spendableBudget,
+      spentSoFar: snapshot.totalSpent,
+      safeToday: snapshot.todayAllowance,
+      daysElapsed: snapshot.daysElapsed,
+      totalDaysInPeriod: snapshot.totalDays,
+      burnRatio: snapshot.spendableBudget > 0 ? snapshot.totalSpent / snapshot.spendableBudget : 1.0,
+      pace: pace,
+    );
+  }
+
   final limitsAsync = ref.watch(limitsStreamProvider);
   final spendAsync = ref.watch(currentMonthSpendSummaryProvider);
-
-  final totalSpend = spendAsync.when(
-    data: (map) => map['_total_expense'] ?? 0.0,
-    loading: () => 0.0,
-    error: (_, __) => 0.0,
-  );
-
-  // Look for overall monthly limit or compute from categories
-  double totalBudget = 25000.0; // Default baseline if not configured
-  final limits = limitsAsync.asData?.value ?? [];
-
+  final totalSpend = spendAsync.value?['_total_expense'] ?? 0.0;
+  double totalBudget = 25000.0;
+  final limits = limitsAsync.value ?? [];
   final overallLimit = limits.firstWhere(
     (l) => (l['scope_type'] as String? ?? '').toLowerCase() == 'overall',
     orElse: () => <String, dynamic>{},
   );
-
   if (overallLimit.isNotEmpty && overallLimit['amount'] != null) {
     totalBudget = (overallLimit['amount'] as num).toDouble();
-  } else if (limits.isNotEmpty) {
-    // Sum of category limits
-    double sum = 0.0;
-    for (final l in limits) {
-      if (l['scope_type'] == 'category') {
-        sum += (l['amount'] as num?)?.toDouble() ?? 0.0;
-      }
-    }
-    if (sum > 0) totalBudget = sum;
   }
-
   return BudgetMathService.calculateSafeToSpend(
     totalBudget: totalBudget,
     spentSoFar: totalSpend,
   );
 });
 
-/// Action controller for limits & saving plans
+// --- PLAN CONTROLLER ---
+
+final planControllerProvider = Provider<PlanController>((ref) => PlanController(ref));
+
 class PlanController {
   final Ref _ref;
 
   PlanController(this._ref);
 
+  /// Creates a new single budget plan and optional expected expenses
+  Future<void> createPlan({
+    required String name,
+    required String periodType,
+    required DateTime startDate,
+    required DateTime endDate,
+    int monthlyStartDay = 1,
+    required double spendingLimit,
+    String reserveType = 'none',
+    double reserveValue = 0.0,
+    List<String>? watchedBankIds,
+    bool countFees = true,
+    bool countWithdrawals = true,
+    String reactionMode = 'adaptive',
+    bool morningBriefEnabled = true,
+    String morningBriefTime = '07:30',
+    bool dailyReportEnabled = true,
+    String dailyReportTime = '21:00',
+    bool skipEmptyDays = false,
+    List<Map<String, dynamic>> expectedExpenses = const [],
+  }) async {
+    final db = await _ref.read(databaseProvider.future);
+    final planId = const Uuid().v4();
+
+    db.upsertBudgetPlan(
+      id: planId,
+      name: name,
+      periodType: periodType,
+      startDate: startDate,
+      endDate: endDate,
+      monthlyStartDay: monthlyStartDay,
+      spendingLimit: spendingLimit,
+      reserveType: reserveType,
+      reserveValue: reserveValue,
+      watchedBankIds: watchedBankIds != null ? jsonEncode(watchedBankIds) : null,
+      countFees: countFees,
+      countWithdrawals: countWithdrawals,
+      reactionMode: reactionMode,
+      status: 'active',
+      morningBriefEnabled: morningBriefEnabled,
+      morningBriefTime: morningBriefTime,
+      dailyReportEnabled: dailyReportEnabled,
+      dailyReportTime: dailyReportTime,
+      skipEmptyDays: skipEmptyDays,
+      changeSeq: 0,
+      isDirty: true,
+    );
+
+    // Insert expected expenses
+    for (final exp in expectedExpenses) {
+      final expId = const Uuid().v4();
+      final dueStr = exp['due_date'] as String?;
+      DateTime? due;
+      if (dueStr != null && dueStr.isNotEmpty) {
+        due = DateTime.tryParse(dueStr);
+      }
+      db.upsertExpectedExpense(
+        id: expId,
+        planId: planId,
+        name: exp['name'] as String? ?? exp['title'] as String? ?? 'Expected Expense',
+        amount: (exp['amount'] as num?)?.toDouble() ?? 0.0,
+        dueDate: due,
+        linkedCategoryId: exp['linked_category_id'] as String?,
+        reminderEnabled: exp['reminder_enabled'] as bool? ?? true,
+        status: exp['status'] as String? ?? 'expected',
+        changeSeq: 0,
+        isDirty: true,
+      );
+    }
+
+    _ref.read(syncStateProvider.notifier).triggerSync();
+  }
+
+  /// Pauses the active plan
+  Future<void> pausePlan(String planId) async {
+    final db = await _ref.read(databaseProvider.future);
+    db.pauseBudgetPlan(planId);
+    _ref.read(syncStateProvider.notifier).triggerSync();
+  }
+
+  /// Resumes a paused plan
+  Future<void> resumePlan(String planId) async {
+    final db = await _ref.read(databaseProvider.future);
+    db.resumeBudgetPlan(planId);
+    _ref.read(syncStateProvider.notifier).triggerSync();
+  }
+
+  /// Deletes the active plan
+  Future<void> deletePlan(String planId) async {
+    final db = await _ref.read(databaseProvider.future);
+    db.deleteBudgetPlan(planId);
+    _ref.read(syncStateProvider.notifier).triggerSync();
+  }
+
+  /// Finishes the active plan with summary payload
+  Future<void> finishPlan(String planId, Map<String, dynamic> finalSummary) async {
+    final db = await _ref.read(databaseProvider.future);
+    db.finishBudgetPlan(planId, jsonEncode(finalSummary));
+    _ref.read(syncStateProvider.notifier).triggerSync();
+  }
+
+  /// Adds a new expected expense to the plan
+  Future<void> addExpectedExpense({
+    required String planId,
+    required String name,
+    required double amount,
+    DateTime? dueDate,
+    String? linkedCategoryId,
+    bool reminderEnabled = true,
+  }) async {
+    final db = await _ref.read(databaseProvider.future);
+    final id = const Uuid().v4();
+    db.upsertExpectedExpense(
+      id: id,
+      planId: planId,
+      name: name,
+      amount: amount,
+      dueDate: dueDate,
+      linkedCategoryId: linkedCategoryId,
+      reminderEnabled: reminderEnabled,
+      status: 'expected',
+      changeSeq: 0,
+      isDirty: true,
+    );
+    _ref.read(syncStateProvider.notifier).triggerSync();
+  }
+
+  /// Updates an existing expected expense
+  Future<void> updateExpectedExpense({
+    required String id,
+    required String planId,
+    required String name,
+    required double amount,
+    DateTime? dueDate,
+    String? linkedCategoryId,
+    bool reminderEnabled = true,
+  }) async {
+    final db = await _ref.read(databaseProvider.future);
+    db.upsertExpectedExpense(
+      id: id,
+      planId: planId,
+      name: name,
+      amount: amount,
+      dueDate: dueDate,
+      linkedCategoryId: linkedCategoryId,
+      reminderEnabled: reminderEnabled,
+      changeSeq: 0,
+      isDirty: true,
+    );
+    _ref.read(syncStateProvider.notifier).triggerSync();
+  }
+
+  /// Deletes an expected expense
+  Future<void> deleteExpectedExpense(String id) async {
+    final db = await _ref.read(databaseProvider.future);
+    db.deleteExpectedExpense(id);
+    _ref.read(syncStateProvider.notifier).triggerSync();
+  }
+
+  /// Marks an expected expense as paid or unpaid
+  Future<void> toggleExpectedExpensePaid(String id, bool isCurrentlyPaid) async {
+    final db = await _ref.read(databaseProvider.future);
+    if (isCurrentlyPaid) {
+      db.markExpectedExpenseUnpaid(id);
+    } else {
+      db.markExpectedExpensePaid(id);
+    }
+    _ref.read(syncStateProvider.notifier).triggerSync();
+  }
+
+  /// Sets a transaction's exclusion flag with reason
+  Future<void> toggleTransactionPlanExclusion(String txnId, {required bool exclude, String? reason}) async {
+    final db = await _ref.read(databaseProvider.future);
+    db.setTransactionPlanExclusion(txnId, exclude: exclude, reason: reason);
+  }
+
+  // Legacy limit saving support
   Future<void> saveOverallBudget({
     required double budget,
     required double reservePct,
@@ -223,7 +412,6 @@ class PlanController {
   }) async {
     final db = await _ref.read(databaseProvider.future);
     final limitId = id ?? 'overall_monthly_limit';
-
     db.upsertLimit(
       id: limitId,
       scopeType: 'overall',
@@ -237,77 +425,6 @@ class PlanController {
       changeSeq: 0,
       isDirty: true,
     );
-
-    _ref.read(syncStateProvider.notifier).triggerSync();
-  }
-
-  Future<void> saveCategoryLimit({
-    required String category,
-    required double limit,
-    required String mode,
-    String? id,
-  }) async {
-    final db = await _ref.read(databaseProvider.future);
-    final limitId = id ?? 'cat_limit_${category.toLowerCase().replaceAll(' ', '_')}';
-
-    db.upsertLimit(
-      id: limitId,
-      scopeType: 'category',
-      scopeId: category,
-      periodType: 'monthly',
-      amount: limit,
-      mode: mode,
-      rollover: false,
-      alertThresholds: jsonEncode([50, 80, 100]),
-      active: true,
-      changeSeq: 0,
-      isDirty: true,
-    );
-
-    _ref.read(syncStateProvider.notifier).triggerSync();
-  }
-
-  Future<void> deleteLimit(String id) async {
-    final db = await _ref.read(databaseProvider.future);
-    db.deleteLimit(id);
-    _ref.read(syncStateProvider.notifier).triggerSync();
-  }
-
-  Future<void> saveSavingPlan({
-    required String name,
-    required double targetAmount,
-    required DateTime targetDate,
-    String? id,
-  }) async {
-    final db = await _ref.read(databaseProvider.future);
-    final planId = id ?? const Uuid().v4();
-
-    db.upsertSavingPlan(
-      id: planId,
-      name: name,
-      targetAmount: targetAmount,
-      targetDate: targetDate,
-      status: 'active',
-      changeSeq: 0,
-      isDirty: true,
-    );
-
-    _ref.read(syncStateProvider.notifier).triggerSync();
-  }
-
-  Future<void> fundSavingPlan(String id, double amountAdded) async {
-    final db = await _ref.read(databaseProvider.future);
-    db.addSavingPlanFunding(id, amountAdded);
-    _ref.read(syncStateProvider.notifier).triggerSync();
-  }
-
-  Future<void> deleteSavingPlan(String id) async {
-    final db = await _ref.read(databaseProvider.future);
-    db.deleteSavingPlan(id);
     _ref.read(syncStateProvider.notifier).triggerSync();
   }
 }
-
-final planControllerProvider = Provider<PlanController>((ref) {
-  return PlanController(ref);
-});

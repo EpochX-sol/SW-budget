@@ -131,6 +131,79 @@ class LocalNotificationService {
       debugPrint('Failed to show local notification: $e');
     }
   }
+
+  /// Sends morning brief at 07:30
+  Future<void> sendMorningBrief({required double todayAllowance}) async {
+    const androidDetails = AndroidNotificationDetails(
+      'budget_alerts',
+      'Daily Briefs & Reports',
+      importance: Importance.high,
+      priority: Priority.high,
+      color: Color(0xFF0F766E),
+    );
+    try {
+      await _notificationsPlugin.show(
+        1001,
+        'Morning Brief',
+        showAmountsOnLockScreen
+            ? 'Good morning. You can spend about ${todayAllowance.toStringAsFixed(0)} ETB today.'
+            : 'Good morning. Your daily spending allowance is ready in SW-budget.',
+        const NotificationDetails(android: androidDetails),
+      );
+    } catch (_) {}
+  }
+
+  /// Sends daily report at 21:00
+  Future<void> sendDailyReport({
+    required double todaySpent,
+    required double todayAllowance,
+    required double leftToSpend,
+    required int daysRemaining,
+    required double tomorrowAllowance,
+    required double totalExpectedToPay,
+  }) async {
+    const androidDetails = AndroidNotificationDetails(
+      'budget_alerts',
+      'Daily Briefs & Reports',
+      importance: Importance.high,
+      priority: Priority.high,
+      color: Color(0xFF0F766E),
+    );
+    try {
+      await _notificationsPlugin.show(
+        1002,
+        'Daily Spending Report',
+        showAmountsOnLockScreen
+            ? 'Today: ${todaySpent.toStringAsFixed(0)} of ${todayAllowance.toStringAsFixed(0)} spent. ${leftToSpend.toStringAsFixed(0)} ETB left, $daysRemaining days to go. Tomorrow: ${tomorrowAllowance.toStringAsFixed(0)} ETB.'
+            : 'Daily report ready: review today\'s spending and tomorrow\'s target in SW-budget.',
+        const NotificationDetails(android: androidDetails),
+      );
+    } catch (_) {}
+  }
+
+  /// Sends alert when emergency reserve begins being used
+  Future<void> sendReserveAlert({
+    required double reserveUsed,
+    required double totalReserve,
+  }) async {
+    const androidDetails = AndroidNotificationDetails(
+      'budget_alerts',
+      'Emergency Reserve Alerts',
+      importance: Importance.high,
+      priority: Priority.high,
+      color: Color(0xFFF59E0B),
+    );
+    try {
+      await _notificationsPlugin.show(
+        1003,
+        'Emergency Reserve Notice',
+        showAmountsOnLockScreen
+            ? 'You\'ve started using your emergency reserve (${reserveUsed.toStringAsFixed(0)} of ${totalReserve.toStringAsFixed(0)} ETB).'
+            : 'You have entered your emergency reserve safety cushion.',
+        const NotificationDetails(android: androidDetails),
+      );
+    } catch (_) {}
+  }
 }
 
 final localNotificationServiceProvider = Provider<LocalNotificationService>((ref) {
