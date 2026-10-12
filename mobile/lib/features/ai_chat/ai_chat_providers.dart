@@ -2,7 +2,6 @@ import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 import '../../core/security/auth_state.dart';
-import '../../core/security/secure_storage_service.dart';
 import '../../data/remote/api_client.dart';
 import '../../data/remote/api_client_provider.dart';
 import '../../data/remote/ai_stream_service.dart';

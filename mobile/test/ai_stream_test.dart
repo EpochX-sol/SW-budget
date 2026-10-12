@@ -1,6 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
+import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:sw_budget/data/remote/ai_stream_service.dart';
 import 'package:sw_budget/domain/entities/ai_models.dart';
 
 void main() {
@@ -73,5 +76,43 @@ void main() {
       final rejected = proposal.copyWith(status: 'rejected');
       expect(rejected.isRejected, isTrue);
     });
+
+    test('AiStreamService parses event: delta and data: text chunks correctly', () async {
+      final dio = Dio();
+      dio.httpClientAdapter = _MockDioAdapter(
+        'event: delta\ndata: {"text":"Your current "}\n\n'
+        'event: delta\ndata: {"text":"net balance is 5,000 ETB."}\n\n'
+        'event: done\ndata: {"type":"done","usage":{"totalTokens":18}}\n\n'
+      );
+      final service = AiStreamService(dio: dio);
+
+      final events = await service.streamMessage(threadId: 't1', content: 'check balance').toList();
+      expect(events.length, 3);
+      expect(events[0].type, AiStreamEventType.token);
+      expect(events[0].token, 'Your current ');
+      expect(events[1].type, AiStreamEventType.token);
+      expect(events[1].token, 'net balance is 5,000 ETB.');
+      expect(events[2].type, AiStreamEventType.done);
+      expect(events[2].usage?['totalTokens'], 18);
+    });
   });
+}
+
+class _MockDioAdapter implements HttpClientAdapter {
+  final String body;
+  _MockDioAdapter(this.body);
+
+  @override
+  Future<ResponseBody> fetch(RequestOptions options, Stream<Uint8List>? requestStream, Future<void>? cancelFuture) async {
+    return ResponseBody.fromString(
+      body,
+      200,
+      headers: {
+        Headers.contentTypeHeader: [Headers.jsonContentType],
+      },
+    );
+  }
+
+  @override
+  void close({bool force = false}) {}
 }

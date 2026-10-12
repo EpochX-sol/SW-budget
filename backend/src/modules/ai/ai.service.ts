@@ -3,7 +3,7 @@ import { FastifyReply } from 'fastify';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { prisma } from '../../db/prisma.js';
 import { env } from '../../config/env.js';
-import { financeTools, GEMINI_TOOL_DECLARATIONS } from './tools/finance-tools.js';
+import { financeTools, GEMINI_TOOL_DECLARATIONS, OPENAI_TOOL_DECLARATIONS } from './tools/finance-tools.js';
 import { aiMemoryService } from './ai-memory.service.js';
 
 const MONTHLY_TOKEN_LIMIT = 50000;
@@ -162,8 +162,162 @@ export class AiService {
     const toolCallsExecuted: any[] = [];
 
     try {
-      // 6. Execute Conversation Flow (Gemini or Deterministic AI Simulator)
-      if (this.genAI) {
+      // 6. Execute Conversation Flow (OpenRouter, Gemini, or Deterministic AI Simulator)
+      const useOpenRouter = Boolean(
+        env.OPENROUTER_API_KEY &&
+        !env.OPENROUTER_API_KEY.startsWith('placeholder_') &&
+        env.OPENROUTER_API_KEY !== 'mock'
+      );
+
+      if (useOpenRouter) {
+        try {
+          const previousMessages = await prisma.aiMessage.findMany({
+            where: { threadId, id: { not: userMsg.id } },
+            orderBy: { createdAt: 'desc' },
+            take: 6,
+          });
+          previousMessages.reverse();
+
+          const messages: any[] = [
+            { role: 'system', content: this.buildSystemPrompt(relevantMemories) },
+            ...previousMessages.map((m) => ({
+              role: m.role === 'user' ? 'user' : 'assistant',
+              content: m.content,
+            })),
+            { role: 'user', content: userContent },
+          ];
+
+          const openRouterUrl = `${env.OPENROUTER_BASE_URL.replace(/\/+$/, '')}/chat/completions`;
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 30000);
+
+          const openRouterRes = await fetch(openRouterUrl, {
+            method: 'POST',
+            signal: controller.signal,
+            headers: {
+              'Authorization': `Bearer ${env.OPENROUTER_API_KEY}`,
+              'Content-Type': 'application/json',
+              'HTTP-Referer': 'https://sw-budget.local',
+              'X-Title': 'SW-Budget AI Coach',
+            },
+            body: JSON.stringify({
+              model: env.OPENROUTER_MODEL,
+              messages,
+              tools: OPENAI_TOOL_DECLARATIONS,
+              tool_choice: 'auto',
+              temperature: 0.2,
+            }),
+          }).finally(() => clearTimeout(timeoutId));
+
+          if (!openRouterRes.ok) {
+            const errText = await openRouterRes.text();
+            throw new Error(`OpenRouter returned HTTP ${openRouterRes.status}: ${errText}`);
+          }
+
+          const completion = (await openRouterRes.json()) as any;
+          const choice = completion.choices?.[0];
+          const choiceMsg = choice?.message;
+
+          if (choiceMsg?.tool_calls && choiceMsg.tool_calls.length > 0) {
+            messages.push(choiceMsg);
+
+            for (const call of choiceMsg.tool_calls) {
+              const toolName = call.function.name;
+              let toolArgs: any = {};
+              try {
+                toolArgs = JSON.parse(call.function.arguments || '{}');
+              } catch (_) {}
+
+              sendSse('tool_start', { tool: toolName, arguments: toolArgs });
+              const toolResult = await this.executeTool(userId, toolName, toolArgs);
+              sendSse('tool_end', { tool: toolName, result: toolResult });
+              toolCallsExecuted.push({ tool: toolName, args: toolArgs, result: toolResult });
+
+              messages.push({
+                role: 'tool',
+                tool_call_id: call.id,
+                name: toolName,
+                content: JSON.stringify(toolResult),
+              });
+            }
+
+            // Stream follow-up from OpenRouter with tool outputs
+            const followUpController = new AbortController();
+            const followUpTimeout = setTimeout(() => followUpController.abort(), 30000);
+
+            const followUpRes = await fetch(openRouterUrl, {
+              method: 'POST',
+              signal: followUpController.signal,
+              headers: {
+                'Authorization': `Bearer ${env.OPENROUTER_API_KEY}`,
+                'Content-Type': 'application/json',
+                'HTTP-Referer': 'https://sw-budget.local',
+                'X-Title': 'SW-Budget AI Coach',
+              },
+              body: JSON.stringify({
+                model: env.OPENROUTER_MODEL,
+                messages,
+                stream: true,
+              }),
+            }).finally(() => clearTimeout(followUpTimeout));
+
+            if (followUpRes.ok && followUpRes.body) {
+              const reader = followUpRes.body.getReader();
+              const decoder = new TextDecoder();
+              let streamDone = false;
+              let buffer = '';
+
+              while (!streamDone) {
+                const { value, done: readerDone } = await reader.read();
+                streamDone = readerDone;
+                if (value) {
+                  buffer += decoder.decode(value, { stream: !streamDone });
+                  const lines = buffer.split('\n');
+                  buffer = lines.pop() ?? '';
+
+                  for (const line of lines) {
+                    const trimmed = line.trim();
+                    if (trimmed.startsWith('data:') && trimmed !== 'data: [DONE]') {
+                      try {
+                        const parsed = JSON.parse(trimmed.slice(5).trim());
+                        const delta = parsed.choices?.[0]?.delta?.content || '';
+                        if (delta) {
+                          assistantText += delta;
+                          sendSse('delta', { text: delta, content: delta, type: 'token' });
+                        }
+                      } catch (_) {}
+                    }
+                  }
+                }
+              }
+            } else if (followUpRes.ok) {
+              const followUpJson = (await followUpRes.json()) as any;
+              const content = followUpJson.choices?.[0]?.message?.content || '';
+              assistantText = content;
+              sendSse('delta', { text: content, content, type: 'token' });
+            } else {
+              throw new Error(`Follow-up call returned HTTP ${followUpRes.status}`);
+            }
+
+            tokensUsed = 520;
+          } else if (choiceMsg?.content) {
+            assistantText = choiceMsg.content;
+            const parts = assistantText.match(/.{1,60}(\s|$)/g) || [assistantText];
+            for (const part of parts) {
+              sendSse('delta', { text: part, content: part, type: 'token' });
+            }
+            tokensUsed = completion.usage?.total_tokens || 350;
+          } else {
+            throw new Error('No content or tool calls returned by OpenRouter');
+          }
+        } catch (openRouterErr: any) {
+          console.warn('OpenRouter call failed, engaging deterministic simulation fallback:', openRouterErr.message || openRouterErr);
+          const simResult = await this.executeDeterministicSimulation(userId, userContent, sendSse);
+          assistantText = simResult.text;
+          tokensUsed = simResult.tokensUsed;
+          toolCallsExecuted.push(...simResult.toolCalls);
+        }
+      } else if (this.genAI) {
         // Live Gemini Model Call with Function Calling
         const model = this.genAI.getGenerativeModel({
           model: 'gemini-1.5-flash',
@@ -194,12 +348,12 @@ export class AiService {
 
             const chunk = followUp.response.text();
             assistantText += chunk;
-            sendSse('delta', { text: chunk });
+            sendSse('delta', { text: chunk, content: chunk, type: 'token' });
           }
         } else {
           const chunk = response.response.text();
           assistantText = chunk;
-          sendSse('delta', { text: chunk });
+          sendSse('delta', { text: chunk, content: chunk, type: 'token' });
         }
         tokensUsed = 420; // Estimated turn tokens
       } else {
@@ -232,11 +386,17 @@ export class AiService {
 
       // 9. Send SSE Done Event
       sendSse('done', {
+        type: 'done',
         message_id: assistantMsg.id,
         tokens_used: tokensUsed,
+        usage: { total_tokens: tokensUsed },
       });
     } catch (err: any) {
-      sendSse('error', { detail: err.message || 'Error generating AI response' });
+      sendSse('error', {
+        type: 'error',
+        detail: err.message || 'Error generating AI response',
+        error: err.message || 'Error generating AI response',
+      });
     } finally {
       reply.raw.end();
     }
@@ -245,17 +405,47 @@ export class AiService {
   private buildSystemPrompt(memories: any[]): string {
     const memoryContext =
       memories.length > 0
-        ? `\nRelevant user facts & goals:\n${memories.map((m) => `- [${m.kind}] ${m.content}`).join('\n')}`
+        ? `\n\n### USER PERSONAL MEMORY & CONTEXT (Episodic Facts)\n${memories.map((m) => `- [${m.kind.toUpperCase()}] ${m.content}`).join('\n')}\nUse these personal facts to customize advice naturally without explicitly announcing "according to your memory".`
         : '';
 
-    return `You are SW-budget AI Financial Coach for Ethiopian users.
-Your core principle: "Numbers from code, words from AI".
-You NEVER compute arithmetic totals, monthly spending, or scenario forecasts in your head.
-Whenever the user asks about money, budget, limits, or purchases, you MUST call one of the deterministic tools:
-- get_spending_summary: for past expenditure and income
-- simulate_scenario: for "can I afford" or prospective purchases
-- get_budget_status: for limit status and percentage used
-All currencies are ETB (Ethiopian Birr). Be encouraging, concise, and realistic.${memoryContext}`;
+    return `### ROLE & MISSION
+You are the SW-Budget AI Financial Coach — an empathetic, disciplined, and insightful personal finance advisor designed specifically for Ethiopian users. Your mission is to help users manage their money, build sustainable financial habits, understand their spending velocity, stay within monthly budget limits, and achieve their personal savings goals.
+
+### THE CARDINAL RULE: "NUMBERS FROM CODE, WORDS FROM AI"
+1. NEVER compute sums, balances, forecasts, or monthly totals in your head. Large Language Models hallucinate numbers. You must obtain ALL figures from tool calls.
+2. Whenever the user asks about money, spending, affordability, limits, loans, or allowances, you MUST invoke one or more of the provided deterministic tools.
+3. Once the tool returns the factual JSON, you interpret and contextualize the numbers in clear, structured, encouraging language.
+4. Always state currency as ETB (Ethiopian Birr). Format figures with commas (e.g. 1,500 ETB, 25,000 ETB).
+
+### TOOL INVOCATION HEURISTICS
+Call the appropriate tool based on user intent:
+1. "get_spending_summary" (period: 'today' | 'this_week' | 'this_month' | 'last_month')
+   - When the user asks how much they spent, earned, or saved in a given timeframe.
+   - For broad checks like "What is my financial situation?" or "How is my spending looking?".
+2. "simulate_scenario" (amount: number, category_id?: string)
+   - When the user asks "Can I afford X?", "Should I buy...", or asks about the impact of a prospective purchase.
+   - Returns exact remaining balance before and after, safe daily budget, and deficit pace.
+3. "get_budget_status"
+   - When the user asks about budget limits, limit utilization percentages, or categories close to overspending.
+4. "get_active_plan_snapshot"
+   - When the user asks about their Adaptive Spending Plan, daily/weekly allowance, tomorrow's rollover allowance, pacing status, or streak.
+5. "simulate_plan_spending" (proposed_spend_amount: number)
+   - When the user asks how spending a particular daily amount affects their multi-day plan.
+6. "query_loans_debts" (status?: 'active' | 'settled' | 'all', person_name?: string)
+   - When the user asks who owes them money (lent) or what they owe to friends/family/banks (borrowed).
+7. "query_reimbursements"
+   - When the user asks about shared bills, group dinners, or pending reimbursements.
+
+### LOCAL ETHIOPIAN FINANCIAL CONTEXT
+- Understand Ethiopian cost realities: daily essentials (buna/coffee ceremonies, injera, grocery staples), transport (Bajaj, minibus taxi, Ride/Feres), housing rent, and traditional financial networks (Equb, Iddir, family remittances).
+- Treat inflation and purchasing power respectfully; focus on cash-flow discipline and practical margin of safety.
+- Language: Respond in the language used by the user. If the user writes in English, reply in English. If the user writes in Amharic (ሀ, ሁ, etc.), reply fluently in Amharic while retaining precise numbers and ETB currency.
+
+### COMMUNICATION & COACHING STYLE
+1. **Empathetic & Non-Judgmental**: Never shame the user for overspending. Acknowledge deficits with calm, proactive steps to recover (e.g., "You exceeded your dining budget by 400 ETB, but we can balance this by trimming discretionary spend by 100 ETB/day over the next 4 days.").
+2. **Concise & Scannable**: Format answers with short paragraphs, clear bullet points, and **bold key numbers**. Mobile screens have limited space; avoid walls of uninterrupted text.
+3. **Action-Oriented**: Conclude each response with 1 concrete recommendation or a helpful follow-up question.
+4. **Safety & Privacy**: Never ask for or store passwords, PINs, or bank credentials. All financial math is computed securely on the user's private ledger.${memoryContext}`;
   }
 
   private async executeTool(userId: string, toolName: string, args: any) {
@@ -364,7 +554,7 @@ All currencies are ETB (Ethiopian Birr). Be encouraging, concise, and realistic.
     // Stream text in 2-3 natural chunks
     const parts = text.match(/.{1,60}(\s|$)/g) || [text];
     for (const part of parts) {
-      sendSse('delta', { text: part });
+      sendSse('delta', { text: part, content: part, type: 'token' });
     }
 
     return {

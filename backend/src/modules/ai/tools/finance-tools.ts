@@ -401,3 +401,123 @@ export const GEMINI_TOOL_DECLARATIONS = [
   },
 ];
 
+/**
+ * OpenAI / OpenRouter Tool Declarations for Function Calling
+ */
+export const OPENAI_TOOL_DECLARATIONS = [
+  {
+    type: 'function',
+    function: {
+      name: 'get_spending_summary',
+      description: 'Retrieve exact, computed spending and income totals for a specific time period. NEVER invent numbers; always use this tool.',
+      parameters: {
+        type: 'object',
+        properties: {
+          period: {
+            type: 'string',
+            enum: ['today', 'this_week', 'this_month', 'last_month'],
+            description: 'The time horizon to aggregate expenses and income for',
+          },
+          category_id: {
+            type: 'string',
+            description: 'Optional UUID of the specific category to filter by',
+          },
+        },
+        required: ['period'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'simulate_scenario',
+      description: 'Simulate the impact of spending a specific amount of money against the user budget and limits. Returns deterministic safe-to-spend balance and deficit pace.',
+      parameters: {
+        type: 'object',
+        properties: {
+          amount: {
+            type: 'number',
+            description: 'The prospective amount in ETB the user wishes to spend',
+          },
+          category_id: {
+            type: 'string',
+            description: 'Optional category UUID of the item or dining occasion',
+          },
+        },
+        required: ['amount'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_budget_status',
+      description: 'Get the exact progress, utilization percentages, and remaining balances for all user budget limits for the current month.',
+      parameters: {
+        type: 'object',
+        properties: {},
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_active_plan_snapshot',
+      description: 'Retrieve the live daily and weekly allowance, tomorrow allowance, pacing status, and streak for the active Adaptive Spending Plan.',
+      parameters: {
+        type: 'object',
+        properties: {},
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'simulate_plan_spending',
+      description: 'Mathematically forecast if a proposed daily spend rate will keep the user within budget by the end of their spending plan period.',
+      parameters: {
+        type: 'object',
+        properties: {
+          proposed_spend_amount: {
+            type: 'number',
+            description: 'The proposed daily expenditure in ETB',
+          },
+        },
+        required: ['proposed_spend_amount'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'query_loans_debts',
+      description: 'Query who owes the user money (lent) and what debts the user owes others (borrowed), including remaining balances.',
+      parameters: {
+        type: 'object',
+        properties: {
+          status: {
+            type: 'string',
+            enum: ['active', 'settled', 'all'],
+            description: 'Filter debts by status',
+          },
+          person_name: {
+            type: 'string',
+            description: 'Optional name of the contact person to filter by',
+          },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'query_reimbursements',
+      description: 'Query expenses that have been reimbursed by friends or counterparties.',
+      parameters: {
+        type: 'object',
+        properties: {},
+      },
+    },
+  },
+];
+

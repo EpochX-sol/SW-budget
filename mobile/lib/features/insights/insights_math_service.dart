@@ -41,6 +41,9 @@ class InsightsDataState {
   // Contextual Observations
   final List<String> observations;
 
+  // Transaction count in active window
+  final int transactionCount;
+
   // Remote analytics (optional / nullable)
   final double? momChangePct;
   final double? totalFees;
@@ -60,6 +63,7 @@ class InsightsDataState {
     required this.categorySegments,
     required this.topMerchants,
     required this.observations,
+    this.transactionCount = 0,
     this.momChangePct,
     this.totalFees,
     this.dailyBurnRate,

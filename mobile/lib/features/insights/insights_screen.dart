@@ -119,6 +119,28 @@ class InsightsScreen extends ConsumerWidget {
                   }).toList(),
                 ),
               ),
+              const SizedBox(height: 8),
+              Center(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: AppColors.surface2,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: AppColors.line),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.calendar_today_rounded, size: 12, color: AppColors.text3),
+                      const SizedBox(width: 6),
+                      Text(
+                        '${DateFormat('d MMM').format(summary.startDate)} – ${DateFormat('d MMM yyyy').format(summary.endDate)} · ${summary.transactionCount} transactions',
+                        style: const TextStyle(color: AppColors.text2, fontSize: 11.5, fontWeight: FontWeight.w500),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
               const SizedBox(height: 14),
 
               // 3. 4-Card Stats Grid

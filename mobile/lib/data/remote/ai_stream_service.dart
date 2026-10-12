@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'package:dio/dio.dart';
 import '../../domain/entities/ai_models.dart';
 import 'api_endpoints.dart';
-import 'api_client.dart';
 
 /// Service responsible for consuming Server-Sent Events (SSE) from the Fastify AI gateway
 class AiStreamService {
@@ -49,6 +48,7 @@ class AiStreamService {
     }
 
     String buffer = '';
+    String currentEvent = '';
 
     await for (final List<int> bytes in responseBody.stream) {
       final chunk = utf8.decode(bytes, allowMalformed: true);
@@ -60,23 +60,34 @@ class AiStreamService {
 
       for (final line in lines) {
         final trimmed = line.trim();
-        if (trimmed.isEmpty) continue;
+        if (trimmed.isEmpty) {
+          currentEvent = '';
+          continue;
+        }
+
+        if (trimmed.startsWith('event:')) {
+          currentEvent = trimmed.substring(6).trim();
+          continue;
+        }
 
         if (trimmed.startsWith('data:')) {
           final jsonStr = trimmed.substring(5).trim();
-          if (jsonStr.isEmpty) continue;
+          if (jsonStr.isEmpty || jsonStr == '[DONE]') continue;
 
           try {
             final eventMap = jsonDecode(jsonStr) as Map<String, dynamic>;
-            final eventType = eventMap['type'] as String? ?? '';
+            final eventType = eventMap['type'] as String? ?? currentEvent;
 
-            if (eventType == 'token') {
-              yield AiStreamEvent(
-                type: AiStreamEventType.token,
-                token: eventMap['content'] as String? ?? '',
-              );
-            } else if (eventType == 'proposal') {
-              final propMap = eventMap['proposal'] as Map<String, dynamic>? ?? {};
+            if (eventType == 'token' || eventType == 'delta' || eventMap.containsKey('text') || eventMap.containsKey('content')) {
+              final token = (eventMap['content'] ?? eventMap['text']) as String?;
+              if (token != null && token.isNotEmpty) {
+                yield AiStreamEvent(
+                  type: AiStreamEventType.token,
+                  token: token,
+                );
+              }
+            } else if (eventType == 'proposal' || eventMap.containsKey('proposal')) {
+              final propMap = eventMap['proposal'] as Map<String, dynamic>? ?? eventMap;
               yield AiStreamEvent(
                 type: AiStreamEventType.proposal,
                 proposal: AiProposal.fromMap(propMap),
@@ -85,6 +96,12 @@ class AiStreamService {
               yield AiStreamEvent(
                 type: AiStreamEventType.done,
                 usage: eventMap['usage'] as Map<String, dynamic>?,
+              );
+            } else if (eventType == 'error' || eventMap.containsKey('error') || eventMap.containsKey('detail')) {
+              final err = (eventMap['error'] ?? eventMap['detail'] ?? 'AI error occurred') as String;
+              yield AiStreamEvent(
+                type: AiStreamEventType.error,
+                error: err,
               );
             }
           } catch (e) {
@@ -99,10 +116,11 @@ class AiStreamService {
       final jsonStr = buffer.trim().substring(5).trim();
       try {
         final eventMap = jsonDecode(jsonStr) as Map<String, dynamic>;
-        if (eventMap['type'] == 'token') {
+        final token = (eventMap['content'] ?? eventMap['text']) as String?;
+        if (token != null && token.isNotEmpty) {
           yield AiStreamEvent(
             type: AiStreamEventType.token,
-            token: eventMap['content'] as String? ?? '',
+            token: token,
           );
         }
       } catch (_) {}

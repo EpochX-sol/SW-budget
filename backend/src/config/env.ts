@@ -14,8 +14,11 @@ const envSchema = z.object({
   JWT_EXPIRES_IN: z.coerce.number().default(900),
   TEMPLATE_SIGNING_PRIVATE_KEY: z.string().optional(),
   TEMPLATE_SIGNING_PUBLIC_KEY: z.string().optional(),
-  LLM_PROVIDER: z.string().default('gemini'),
+  LLM_PROVIDER: z.string().default('openrouter'),
   GEMINI_API_KEY: z.string().optional(),
+  OPENROUTER_API_KEY: z.string().optional(),
+  OPENROUTER_BASE_URL: z.string().default('https://openrouter.ai/api/v1'),
+  OPENROUTER_MODEL: z.string().default('cohere/north-mini-code:free'),
 });
 
 const parsed = envSchema.safeParse(process.env);
