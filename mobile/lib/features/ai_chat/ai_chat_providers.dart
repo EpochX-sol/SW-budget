@@ -102,6 +102,9 @@ class AiChatNotifier extends StateNotifier<ChatState> {
 
     final threadId = state.activeThreadId ?? 'local_fallback_thread';
 
+    // 0. Trigger background sync so backend has latest local accounts & transactions
+    _ref.read(syncProvider.notifier).triggerSync().catchError((_) {});
+
     // 1. Append User Message
     final userMessage = AiMessage(
       id: const Uuid().v4(),
@@ -167,6 +170,10 @@ class AiChatNotifier extends StateNotifier<ChatState> {
       }
 
       // Finalize assistant message
+      if (fullContent.trim().isEmpty) {
+        fullContent = state.errorMessage ??
+            "I couldn't retrieve your financial response right now. Please try again in a moment.";
+      }
       _updateAssistantMessage(
         assistantMessageId,
         content: fullContent,

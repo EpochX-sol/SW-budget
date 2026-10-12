@@ -298,6 +298,77 @@ export class FinanceTools {
     const { reimbursementService } = await import('../../finance/reimbursements/reimbursement.service.js');
     return reimbursementService.queryReimbursements(userId, args);
   }
+
+  /**
+   * Retrieves current bank and wallet balances (CBE, Telebirr, Abyssinia, Cash) and all-time net savings.
+   */
+  async getAccountBalances(userId: string) {
+    const accounts = await prisma.account.findMany({
+      where: { userId, deletedAt: null },
+      select: {
+        id: true,
+        provider: true,
+        name: true,
+        accountMask: true,
+        lastKnownBalance: true,
+        balanceUpdatedAt: true,
+        isSavings: true,
+      },
+      orderBy: { updatedAt: 'desc' },
+    });
+
+    let totalLiquidBalance = 0;
+    let totalSavingsBalance = 0;
+
+    const accountList = accounts.map((acc) => {
+      const bal = acc.lastKnownBalance ? Number(acc.lastKnownBalance) : 0;
+      if (acc.isSavings) {
+        totalSavingsBalance += bal;
+      } else {
+        totalLiquidBalance += bal;
+      }
+      return {
+        id: acc.id,
+        name: acc.name,
+        provider: acc.provider,
+        account_mask: acc.accountMask,
+        balance: Math.round(bal * 100) / 100,
+        is_savings: acc.isSavings,
+        last_updated: acc.balanceUpdatedAt?.toISOString() || null,
+      };
+    });
+
+    // Also get all-time transaction net balance
+    const allTxns = await prisma.transaction.findMany({
+      where: { userId, deletedAt: null },
+      select: { type: true, amount: true },
+    });
+
+    let allTimeIncome = 0;
+    let allTimeExpense = 0;
+    for (const t of allTxns) {
+      const amt = Number(t.amount);
+      if (t.type.toLowerCase() === 'income') allTimeIncome += amt;
+      else if (t.type.toLowerCase() === 'expense') allTimeExpense += amt;
+    }
+    const allTimeNetSavings = Math.round((allTimeIncome - allTimeExpense) * 100) / 100;
+
+    const totalBalance = totalLiquidBalance + totalSavingsBalance;
+    const effectiveTotal = accounts.length > 0 ? totalBalance : allTimeNetSavings;
+
+    return {
+      total_balance: effectiveTotal,
+      total_liquid_balance: totalLiquidBalance,
+      total_savings_balance: totalSavingsBalance,
+      all_time_net_savings: allTimeNetSavings,
+      total_recorded_income: Math.round(allTimeIncome * 100) / 100,
+      total_recorded_expense: Math.round(allTimeExpense * 100) / 100,
+      accounts: accountList,
+      has_accounts: accounts.length > 0,
+      has_transactions: allTxns.length > 0,
+      currency: 'ETB',
+    };
+  }
 }
 
 export const financeTools = new FinanceTools();
@@ -306,6 +377,14 @@ export const financeTools = new FinanceTools();
  * Gemini Tool Declarations for Function Calling
  */
 export const GEMINI_TOOL_DECLARATIONS = [
+  {
+    name: 'get_account_balances',
+    description: 'Retrieve current bank and wallet account balances (CBE, Telebirr, Abyssinia, Cash) and total liquid/savings balances. ALWAYS call this when user asks about their balance, how much money they have, or bank status.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {},
+    },
+  },
   {
     name: 'get_spending_summary',
     description: 'Retrieve exact, computed spending and income totals for a specific time period. NEVER invent numbers; always use this tool.',
@@ -405,6 +484,17 @@ export const GEMINI_TOOL_DECLARATIONS = [
  * OpenAI / OpenRouter Tool Declarations for Function Calling
  */
 export const OPENAI_TOOL_DECLARATIONS = [
+  {
+    type: 'function',
+    function: {
+      name: 'get_account_balances',
+      description: 'Retrieve current bank and wallet account balances (CBE, Telebirr, Abyssinia, Cash) and total liquid/savings balances. ALWAYS call this when user asks about their balance, how much money they have, or bank status.',
+      parameters: {
+        type: 'object',
+        properties: {},
+      },
+    },
+  },
   {
     type: 'function',
     function: {

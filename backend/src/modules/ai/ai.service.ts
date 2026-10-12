@@ -300,7 +300,16 @@ export class AiService {
             }
 
             tokensUsed = 520;
-          } else if (choiceMsg?.content) {
+
+            if (!assistantText || !assistantText.trim()) {
+              console.warn('OpenRouter follow-up yielded empty text. Synthesizing from tool calls...');
+              assistantText = this.synthesizeToolResults(userContent, toolCallsExecuted);
+              const parts = assistantText.match(/.{1,60}(\s|$)/g) || [assistantText];
+              for (const part of parts) {
+                sendSse('delta', { text: part, content: part, type: 'token' });
+              }
+            }
+          } else if (choiceMsg?.content && choiceMsg.content.trim()) {
             assistantText = choiceMsg.content;
             const parts = assistantText.match(/.{1,60}(\s|$)/g) || [assistantText];
             for (const part of parts) {
@@ -312,6 +321,13 @@ export class AiService {
           }
         } catch (openRouterErr: any) {
           console.warn('OpenRouter call failed, engaging deterministic simulation fallback:', openRouterErr.message || openRouterErr);
+          const simResult = await this.executeDeterministicSimulation(userId, userContent, sendSse);
+          assistantText = simResult.text;
+          tokensUsed = simResult.tokensUsed;
+          toolCallsExecuted.push(...simResult.toolCalls);
+        }
+
+        if (!assistantText || !assistantText.trim()) {
           const simResult = await this.executeDeterministicSimulation(userId, userContent, sendSse);
           assistantText = simResult.text;
           tokensUsed = simResult.tokensUsed;
@@ -419,21 +435,24 @@ You are the SW-Budget AI Financial Coach — an empathetic, disciplined, and ins
 
 ### TOOL INVOCATION HEURISTICS
 Call the appropriate tool based on user intent:
-1. "get_spending_summary" (period: 'today' | 'this_week' | 'this_month' | 'last_month')
+1. "get_account_balances"
+   - ALWAYS invoke this tool whenever the user asks "What is my balance?", "How much money do I have?", "Check my bank balance", or asks about CBE, Telebirr, Abyssinia, or Cash account balances.
+   - NEVER ask the user what time period they want when asking for their balance. Invoke "get_account_balances" immediately.
+2. "get_spending_summary" (period: 'today' | 'this_week' | 'this_month' | 'last_month')
    - When the user asks how much they spent, earned, or saved in a given timeframe.
    - For broad checks like "What is my financial situation?" or "How is my spending looking?".
-2. "simulate_scenario" (amount: number, category_id?: string)
+3. "simulate_scenario" (amount: number, category_id?: string)
    - When the user asks "Can I afford X?", "Should I buy...", or asks about the impact of a prospective purchase.
    - Returns exact remaining balance before and after, safe daily budget, and deficit pace.
-3. "get_budget_status"
+4. "get_budget_status"
    - When the user asks about budget limits, limit utilization percentages, or categories close to overspending.
-4. "get_active_plan_snapshot"
+5. "get_active_plan_snapshot"
    - When the user asks about their Adaptive Spending Plan, daily/weekly allowance, tomorrow's rollover allowance, pacing status, or streak.
-5. "simulate_plan_spending" (proposed_spend_amount: number)
+6. "simulate_plan_spending" (proposed_spend_amount: number)
    - When the user asks how spending a particular daily amount affects their multi-day plan.
-6. "query_loans_debts" (status?: 'active' | 'settled' | 'all', person_name?: string)
+7. "query_loans_debts" (status?: 'active' | 'settled' | 'all', person_name?: string)
    - When the user asks who owes them money (lent) or what they owe to friends/family/banks (borrowed).
-7. "query_reimbursements"
+8. "query_reimbursements"
    - When the user asks about shared bills, group dinners, or pending reimbursements.
 
 ### LOCAL ETHIOPIAN FINANCIAL CONTEXT
@@ -449,6 +468,9 @@ Call the appropriate tool based on user intent:
   }
 
   private async executeTool(userId: string, toolName: string, args: any) {
+    if (toolName === 'get_account_balances') {
+      return financeTools.getAccountBalances(userId);
+    }
     if (toolName === 'get_spending_summary') {
       return financeTools.getSpendingSummary(userId, args);
     }
@@ -473,6 +495,60 @@ Call the appropriate tool based on user intent:
     throw new Error(`Unknown tool: ${toolName}`);
   }
 
+  private synthesizeToolResults(userContent: string, toolCalls: any[]): string {
+    if (!toolCalls || toolCalls.length === 0) {
+      return "I analyzed your request, but could not retrieve matching financial data. Please ensure your accounts or transactions are recorded.";
+    }
+
+    const messages: string[] = [];
+    for (const call of toolCalls) {
+      const { tool, result } = call;
+      if (!result) continue;
+
+      if (tool === 'get_account_balances') {
+        if (result.has_accounts) {
+          const lines = result.accounts.map(
+            (a: any) => `- **${a.name}** (${a.provider}${a.account_mask ? ' ' + a.account_mask : ''}): **${Number(a.balance).toLocaleString()} ETB**`
+          );
+          messages.push(`Your total balance is **${Number(result.total_balance).toLocaleString()} ETB** (Liquid: ${Number(result.total_liquid_balance).toLocaleString()} ETB, Savings: ${Number(result.total_savings_balance).toLocaleString()} ETB):\n\n` + lines.join('\n'));
+        } else if (result.has_transactions) {
+          messages.push(`Across your recorded transactions, your net balance is **${Number(result.all_time_net_savings).toLocaleString()} ETB** (Total Income: ${Number(result.total_recorded_income).toLocaleString()} ETB, Total Expenses: ${Number(result.total_recorded_expense).toLocaleString()} ETB).`);
+        } else {
+          messages.push(`You currently have no recorded bank accounts or transactions in SW-budget. Connect SMS tracking or record accounts to track your balances.`);
+        }
+      } else if (tool === 'get_spending_summary') {
+        messages.push(`For the period **${result.period}**, your total spending is **${Number(result.total_expense).toLocaleString()} ETB** across ${result.transaction_count} transactions, with **${Number(result.total_income).toLocaleString()} ETB** in income (Net: **${Number(result.net_savings).toLocaleString()} ETB**).`);
+      } else if (tool === 'simulate_scenario') {
+        if (result.has_limit && result.limit_breached) {
+          messages.push(`Spending **${Number(result.proposed_amount).toLocaleString()} ETB** will exceed your monthly limit! You have ${Number(result.remaining_before).toLocaleString()} ETB remaining before exceeding.`);
+        } else if (result.has_limit) {
+          messages.push(`You can safely spend **${Number(result.proposed_amount).toLocaleString()} ETB**. Remaining allowance will be ${Number(result.remaining_after).toLocaleString()} ETB.`);
+        } else {
+          messages.push(`Adding **${Number(result.proposed_amount).toLocaleString()} ETB** brings your total to ${Number(result.simulated_total).toLocaleString()} ETB.`);
+        }
+      } else if (tool === 'get_budget_status') {
+        if (result.active_limits && result.active_limits.length > 0) {
+          const lines = result.active_limits.map(
+            (l: any) => `- **${l.scope_name}**: ${Number(l.spent).toLocaleString()} / ${Number(l.limit_amount).toLocaleString()} ETB (${l.percentage_used}% used)`
+          );
+          messages.push(`Here is your budget status for **${result.month}**:\n` + lines.join('\n'));
+        } else {
+          messages.push(`You currently have no active budget limits configured.`);
+        }
+      } else if (tool === 'get_active_plan_snapshot') {
+        if (result.has_active_plan) {
+          messages.push(`Your active plan is **"${result.plan_name}"**. Today's allowance: **${result.allowance_today} ETB** (${result.spent_today} ETB spent). Tomorrow's allowance: **${result.tomorrow_allowance} ETB**.`);
+        } else {
+          messages.push(`You do not have an active spending plan configured yet.`);
+        }
+      } else if (tool === 'query_loans_debts') {
+        messages.push(`You have lent **${result.total_lent} ETB** and borrowed **${result.total_borrowed} ETB** across ${result.debts?.length || 0} active records.`);
+      }
+    }
+
+    return messages.length > 0 ? messages.join('\n\n') : "I processed your financial query. Let me know if you would like more details!";
+  }
+
   /**
    * Deterministic local simulator when running in test / offline mode without API keys.
    */
@@ -489,7 +565,23 @@ Call the appropriate tool based on user intent:
     const amountMatch = userContent.match(/(\d+[\d,]*(\.\d+)?)/);
     const amount = amountMatch ? parseFloat(amountMatch[1].replace(/,/g, '')) : null;
 
-    if (lower.includes('plan') || lower.includes('allowance') || lower.includes('tomorrow')) {
+    if (lower.includes('balance') || lower.includes('bank') || lower.includes('cbe') || lower.includes('telebirr') || lower.includes('account') || lower.includes('money') || lower.includes('funds')) {
+      sendSse('tool_start', { tool: 'get_account_balances', arguments: {} });
+      const res = await financeTools.getAccountBalances(userId);
+      sendSse('tool_end', { tool: 'get_account_balances', result: res });
+      toolCalls.push({ tool: 'get_account_balances', args: {}, result: res });
+
+      if (res.has_accounts) {
+        const lines = res.accounts.map(
+          (a: any) => `- **${a.name}** (${a.provider}${a.account_mask ? ' ' + a.account_mask : ''}): **${a.balance.toLocaleString()} ETB**`
+        );
+        text = `Your total balance is **${res.total_balance.toLocaleString()} ETB** (Liquid: ${res.total_liquid_balance.toLocaleString()} ETB, Savings: ${res.total_savings_balance.toLocaleString()} ETB):\n\n` + lines.join('\n');
+      } else if (res.has_transactions) {
+        text = `Across your recorded transactions, your net balance is **${res.all_time_net_savings.toLocaleString()} ETB** (Total Income: ${res.total_recorded_income.toLocaleString()} ETB, Total Expenses: ${res.total_recorded_expense.toLocaleString()} ETB).`;
+      } else {
+        text = `You currently have no recorded bank accounts or transactions in SW-budget. Connect SMS tracking or record accounts to track your balances.`;
+      }
+    } else if (lower.includes('plan') || lower.includes('allowance') || lower.includes('tomorrow')) {
       sendSse('tool_start', { tool: 'get_active_plan_snapshot', arguments: {} });
       const snap = await financeTools.getActivePlanSnapshot(userId);
       sendSse('tool_end', { tool: 'get_active_plan_snapshot', result: snap });
