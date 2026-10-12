@@ -1,6 +1,18 @@
 import { prisma } from '../../db/prisma.js';
 import { Prisma } from '@prisma/client';
 import { SyncChangeItem } from './sync.schemas.js';
+import { createHash } from 'node:crypto';
+
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export function toDeterministicUuid(id: string | null | undefined): string {
+  if (!id) return id as any;
+  if (UUID_REGEX.test(id)) {
+    return id.toLowerCase();
+  }
+  const hash = createHash('md5').update('sw-budget-namespace:' + id).digest('hex');
+  return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-4${hash.slice(13, 16)}-a${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
+}
 
 export class SyncRepository {
   async getUserSeq(userId: string): Promise<bigint> {
@@ -32,7 +44,9 @@ export class SyncRepository {
       for (const change of changes) {
         runningSeq += 1n;
         const itemSeq = runningSeq;
-        const { entity, op, id, data } = change;
+        const rawId = change.id;
+        const id = toDeterministicUuid(rawId);
+        const { entity, op, data } = change;
 
         if (entity === 'transaction') {
           if (op === 'delete') {
@@ -44,14 +58,16 @@ export class SyncRepository {
             const amount = new Prisma.Decimal(data.amount || 0);
             const balanceAfter = data.balance_after != null ? new Prisma.Decimal(data.balance_after) : null;
             const occurredAt = new Date(data.occurred_at || new Date());
+            const targetAccountId = toDeterministicUuid(data.account_id);
+            const targetCategoryId = data.category_id ? toDeterministicUuid(data.category_id) : null;
 
             await tx.transaction.upsert({
               where: { id },
               create: {
                 id,
                 userId,
-                accountId: data.account_id,
-                categoryId: data.category_id || null,
+                accountId: targetAccountId,
+                categoryId: targetCategoryId,
                 type: data.type || 'expense',
                 amount,
                 balanceAfter,
@@ -72,8 +88,8 @@ export class SyncRepository {
                 changeSeq: itemSeq,
               },
               update: {
-                accountId: data.account_id,
-                categoryId: data.category_id || null,
+                accountId: targetAccountId,
+                categoryId: targetCategoryId,
                 type: data.type || 'expense',
                 amount,
                 balanceAfter,
@@ -91,12 +107,12 @@ export class SyncRepository {
               },
             });
 
-            if (data.category_id && data.account_id) {
+            if (targetCategoryId && targetAccountId) {
               const dayStr = occurredAt.toISOString().slice(0, 10);
               aggregateUpdates.push({
                 day: dayStr,
-                categoryId: data.category_id,
-                accountId: data.account_id,
+                categoryId: targetCategoryId,
+                accountId: targetAccountId,
               });
             }
           }

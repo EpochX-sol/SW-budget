@@ -102,8 +102,13 @@ class AiChatNotifier extends StateNotifier<ChatState> {
 
     final threadId = state.activeThreadId ?? 'local_fallback_thread';
 
-    // 0. Trigger background sync so backend has latest local accounts & transactions
-    _ref.read(syncStateProvider.notifier).triggerSync().catchError((_) {});
+    // 0. Ensure backend has latest local accounts & transactions before querying AI
+    try {
+      await _ref
+          .read(syncStateProvider.notifier)
+          .triggerSync()
+          .timeout(const Duration(seconds: 2));
+    } catch (_) {}
 
     // 1. Append User Message
     final userMessage = AiMessage(

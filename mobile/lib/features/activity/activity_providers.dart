@@ -1,4 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:uuid/uuid.dart';
 import '../../data/local/app_database.dart';
 import '../../data/local/database_provider.dart';
 
@@ -55,7 +56,8 @@ class TransactionController {
   }) async {
     final db = await _ref.read(databaseProvider.future);
     final now = DateTime.now();
-    final id = 'manual_${now.millisecondsSinceEpoch}';
+    final id = const Uuid().v4();
+    final dedupeKey = 'manual_${now.millisecondsSinceEpoch}';
 
     // Update account balance if known
     final acc = db.getAccountById(accountId);
@@ -74,6 +76,7 @@ class TransactionController {
       amount: amount,
       balanceAfter: balanceAfter,
       counterparty: counterparty,
+      dedupeKey: dedupeKey,
       note: note.isNotEmpty ? note : null,
       occurredAt: now,
       source: 'manual',

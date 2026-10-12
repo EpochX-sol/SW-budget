@@ -17,13 +17,13 @@ export const syncChangeItemSchema = z.object({
     'loan_repayment',
   ]),
   op: z.enum(['upsert', 'delete']),
-  id: z.string().uuid(),
+  id: z.string().min(1),
   client_updated_at: z.string(),
   data: z.record(z.any()),
 });
 
 export const syncPushSchema = z.object({
-  device_id: z.string().uuid(),
+  device_id: z.string().min(1),
   batch_index: z.number().int().default(1),
   total_batches: z.number().int().default(1),
   changes: z.array(syncChangeItemSchema).max(100, 'Batch size must not exceed 100 items'),

@@ -6,6 +6,7 @@ import 'core/security/auth_state.dart';
 import 'core/theme/app_theme.dart';
 import 'data/local/app_database.dart';
 import 'data/sms/ingestion_provider.dart';
+import 'data/sync/sync_provider.dart';
 export 'data/sms/sources/sms_transaction_source.dart' show onBackgroundSmsMessage;
 
 void main() {
@@ -30,6 +31,9 @@ class _SwBudgetAppState extends ConsumerState<SwBudgetApp> with WidgetsBindingOb
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      ref.read(syncStateProvider.notifier).triggerSync().catchError((_) {});
+    });
   }
 
   @override
@@ -49,6 +53,7 @@ class _SwBudgetAppState extends ConsumerState<SwBudgetApp> with WidgetsBindingOb
       ref.read(backgroundSyncCoordinatorProvider.future).then((coordinator) {
         coordinator.executeForegroundCatchUp();
       }).catchError((_) {});
+      ref.read(syncStateProvider.notifier).triggerSync().catchError((_) {});
     }
   }
 

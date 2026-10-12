@@ -344,6 +344,8 @@ class AppDatabase {
     try { _db.execute('ALTER TABLE local_reimbursements ADD COLUMN is_dirty INTEGER NOT NULL DEFAULT 1;'); } catch (_) {}
     try { _db.execute('ALTER TABLE local_transactions ADD COLUMN exclude_from_plan INTEGER NOT NULL DEFAULT 0;'); } catch (_) {}
     try { _db.execute('ALTER TABLE local_transactions ADD COLUMN plan_exclusion_reason TEXT;'); } catch (_) {}
+    try { _db.execute('UPDATE local_accounts SET is_dirty = 1 WHERE change_seq = 0;'); } catch (_) {}
+    try { _db.execute('UPDATE local_transactions SET is_dirty = 1 WHERE change_seq = 0;'); } catch (_) {}
   }
 
   // --- ACCOUNTS ---
