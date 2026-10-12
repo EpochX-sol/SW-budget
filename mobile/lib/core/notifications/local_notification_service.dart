@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 /// On-device local notification service providing instant threshold alerts (<50ms)
 /// following transaction ingestion without requiring cloud network connectivity.
