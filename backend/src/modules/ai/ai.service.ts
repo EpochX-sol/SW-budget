@@ -188,66 +188,17 @@ export class AiService {
           ];
 
           const openRouterUrl = `${env.OPENROUTER_BASE_URL.replace(/\/+$/, '')}/chat/completions`;
-          const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 30000);
+          let turn = 0;
+          const maxTurns = 3;
 
-          const openRouterRes = await fetch(openRouterUrl, {
-            method: 'POST',
-            signal: controller.signal,
-            headers: {
-              'Authorization': `Bearer ${env.OPENROUTER_API_KEY}`,
-              'Content-Type': 'application/json',
-              'HTTP-Referer': 'https://sw-budget.local',
-              'X-Title': 'SW-Budget AI Coach',
-            },
-            body: JSON.stringify({
-              model: env.OPENROUTER_MODEL,
-              messages,
-              tools: OPENAI_TOOL_DECLARATIONS,
-              tool_choice: 'auto',
-              temperature: 0.2,
-            }),
-          }).finally(() => clearTimeout(timeoutId));
+          while (turn < maxTurns) {
+            turn++;
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 35000);
 
-          if (!openRouterRes.ok) {
-            const errText = await openRouterRes.text();
-            throw new Error(`OpenRouter returned HTTP ${openRouterRes.status}: ${errText}`);
-          }
-
-          const completion = (await openRouterRes.json()) as any;
-          const choice = completion.choices?.[0];
-          const choiceMsg = choice?.message;
-
-          if (choiceMsg?.tool_calls && choiceMsg.tool_calls.length > 0) {
-            messages.push(choiceMsg);
-
-            for (const call of choiceMsg.tool_calls) {
-              const toolName = call.function.name;
-              let toolArgs: any = {};
-              try {
-                toolArgs = JSON.parse(call.function.arguments || '{}');
-              } catch (_) {}
-
-              sendSse('tool_start', { tool: toolName, arguments: toolArgs });
-              const toolResult = await this.executeTool(userId, toolName, toolArgs);
-              sendSse('tool_end', { tool: toolName, result: toolResult });
-              toolCallsExecuted.push({ tool: toolName, args: toolArgs, result: toolResult });
-
-              messages.push({
-                role: 'tool',
-                tool_call_id: call.id,
-                name: toolName,
-                content: JSON.stringify(toolResult),
-              });
-            }
-
-            // Stream follow-up from OpenRouter with tool outputs
-            const followUpController = new AbortController();
-            const followUpTimeout = setTimeout(() => followUpController.abort(), 30000);
-
-            const followUpRes = await fetch(openRouterUrl, {
+            const openRouterRes = await fetch(openRouterUrl, {
               method: 'POST',
-              signal: followUpController.signal,
+              signal: controller.signal,
               headers: {
                 'Authorization': `Bearer ${env.OPENROUTER_API_KEY}`,
                 'Content-Type': 'application/json',
@@ -257,67 +208,68 @@ export class AiService {
               body: JSON.stringify({
                 model: env.OPENROUTER_MODEL,
                 messages,
-                stream: true,
+                tools: OPENAI_TOOL_DECLARATIONS,
+                tool_choice: 'auto',
+                temperature: 0.2,
               }),
-            }).finally(() => clearTimeout(followUpTimeout));
+            }).finally(() => clearTimeout(timeoutId));
 
-            if (followUpRes.ok && followUpRes.body) {
-              const reader = followUpRes.body.getReader();
-              const decoder = new TextDecoder();
-              let streamDone = false;
-              let buffer = '';
-
-              while (!streamDone) {
-                const { value, done: readerDone } = await reader.read();
-                streamDone = readerDone;
-                if (value) {
-                  buffer += decoder.decode(value, { stream: !streamDone });
-                  const lines = buffer.split('\n');
-                  buffer = lines.pop() ?? '';
-
-                  for (const line of lines) {
-                    const trimmed = line.trim();
-                    if (trimmed.startsWith('data:') && trimmed !== 'data: [DONE]') {
-                      try {
-                        const parsed = JSON.parse(trimmed.slice(5).trim());
-                        const delta = parsed.choices?.[0]?.delta?.content || '';
-                        if (delta) {
-                          assistantText += delta;
-                          sendSse('delta', { text: delta, content: delta, type: 'token' });
-                        }
-                      } catch (_) {}
-                    }
-                  }
-                }
-              }
-            } else if (followUpRes.ok) {
-              const followUpJson = (await followUpRes.json()) as any;
-              const content = followUpJson.choices?.[0]?.message?.content || '';
-              assistantText = content;
-              sendSse('delta', { text: content, content, type: 'token' });
-            } else {
-              throw new Error(`Follow-up call returned HTTP ${followUpRes.status}`);
+            if (!openRouterRes.ok) {
+              const errText = await openRouterRes.text();
+              throw new Error(`OpenRouter returned HTTP ${openRouterRes.status}: ${errText}`);
             }
 
-            tokensUsed = 520;
+            const completion = (await openRouterRes.json()) as any;
+            const choice = completion.choices?.[0];
+            const choiceMsg = choice?.message;
 
-            if (!assistantText || !assistantText.trim()) {
-              console.warn('OpenRouter follow-up yielded empty text. Synthesizing from tool calls...');
-              assistantText = this.synthesizeToolResults(userContent, toolCallsExecuted);
+            if (choiceMsg?.tool_calls && choiceMsg.tool_calls.length > 0) {
+              messages.push(choiceMsg);
+
+              for (const call of choiceMsg.tool_calls) {
+                const toolName = call.function.name;
+                let toolArgs: any = {};
+                try {
+                  toolArgs = JSON.parse(call.function.arguments || '{}');
+                } catch (_) {}
+
+                sendSse('tool_start', { tool: toolName, arguments: toolArgs });
+                const toolResult = await this.executeTool(userId, toolName, toolArgs);
+                sendSse('tool_end', { tool: toolName, result: toolResult });
+                toolCallsExecuted.push({ tool: toolName, args: toolArgs, result: toolResult });
+
+                messages.push({
+                  role: 'tool',
+                  tool_call_id: call.id,
+                  name: toolName,
+                  content: JSON.stringify(toolResult),
+                });
+              }
+
+              // Continue next turn to allow multi-step tool calls or synthesis
+              continue;
+            } else if (choiceMsg?.content && choiceMsg.content.trim()) {
+              assistantText = choiceMsg.content;
               const parts = assistantText.match(/.{1,60}(\s|$)/g) || [assistantText];
               for (const part of parts) {
                 sendSse('delta', { text: part, content: part, type: 'token' });
               }
+              tokensUsed = completion.usage?.total_tokens || 350;
+              break;
+            } else {
+              break;
             }
-          } else if (choiceMsg?.content && choiceMsg.content.trim()) {
-            assistantText = choiceMsg.content;
+          }
+
+          tokensUsed = Math.max(tokensUsed, 350 + toolCallsExecuted.length * 80);
+
+          if (!assistantText || !assistantText.trim()) {
+            console.warn('OpenRouter finished without final text. Synthesizing from tool calls...');
+            assistantText = this.synthesizeToolResults(userContent, toolCallsExecuted);
             const parts = assistantText.match(/.{1,60}(\s|$)/g) || [assistantText];
             for (const part of parts) {
               sendSse('delta', { text: part, content: part, type: 'token' });
             }
-            tokensUsed = completion.usage?.total_tokens || 350;
-          } else {
-            throw new Error('No content or tool calls returned by OpenRouter');
           }
         } catch (openRouterErr: any) {
           console.warn('OpenRouter call failed, engaging deterministic simulation fallback:', openRouterErr.message || openRouterErr);
@@ -441,18 +393,30 @@ Call the appropriate tool based on user intent:
 2. "get_spending_summary" (period: 'today' | 'this_week' | 'this_month' | 'last_month')
    - When the user asks how much they spent, earned, or saved in a given timeframe.
    - For broad checks like "What is my financial situation?" or "How is my spending looking?".
-3. "simulate_scenario" (amount: number, category_id?: string)
+3. "query_transactions"
+   - When the user asks about specific transactions, recent purchases, or wants to filter transactions by date, merchant, note, category, type, or amount.
+4. "search_merchant_spending" (merchant_name: string, period?: string)
+   - When the user asks how much they spent with a specific merchant or service (e.g. Feres, Ride, Kaldis, Telebirr, Supermarket).
+5. "get_top_expenses" (period?: string, limit?: number)
+   - When the user asks about their biggest expenses, highest purchases, or top spending items.
+6. "get_category_breakdown" (period?: string)
+   - When the user asks for a category-by-category breakdown, pie chart distribution, or where their money went.
+7. "detect_recurring_bills"
+   - When the user asks about regular bills, subscriptions, recurring commitments (e.g. WiFi, rent, gym, DSTV).
+8. "query_saving_goals"
+   - When the user asks about their savings goals, progress toward targets, or how much they have saved.
+9. "simulate_scenario" (amount: number, category_id?: string)
    - When the user asks "Can I afford X?", "Should I buy...", or asks about the impact of a prospective purchase.
    - Returns exact remaining balance before and after, safe daily budget, and deficit pace.
-4. "get_budget_status"
+10. "get_budget_status"
    - When the user asks about budget limits, limit utilization percentages, or categories close to overspending.
-5. "get_active_plan_snapshot"
+11. "get_active_plan_snapshot"
    - When the user asks about their Adaptive Spending Plan, daily/weekly allowance, tomorrow's rollover allowance, pacing status, or streak.
-6. "simulate_plan_spending" (proposed_spend_amount: number)
+12. "simulate_plan_spending" (proposed_spend_amount: number)
    - When the user asks how spending a particular daily amount affects their multi-day plan.
-7. "query_loans_debts" (status?: 'active' | 'settled' | 'all', person_name?: string)
+13. "query_loans_debts" (status?: 'active' | 'settled' | 'all', person_name?: string)
    - When the user asks who owes them money (lent) or what they owe to friends/family/banks (borrowed).
-8. "query_reimbursements"
+14. "query_reimbursements"
    - When the user asks about shared bills, group dinners, or pending reimbursements.
 
 ### LOCAL ETHIOPIAN FINANCIAL CONTEXT
@@ -491,6 +455,24 @@ Call the appropriate tool based on user intent:
     }
     if (toolName === 'query_reimbursements') {
       return financeTools.queryReimbursements(userId, args);
+    }
+    if (toolName === 'query_transactions') {
+      return financeTools.queryTransactions(userId, args);
+    }
+    if (toolName === 'search_merchant_spending') {
+      return financeTools.searchMerchantSpending(userId, args);
+    }
+    if (toolName === 'get_top_expenses') {
+      return financeTools.getTopExpenses(userId, args);
+    }
+    if (toolName === 'get_category_breakdown') {
+      return financeTools.getCategoryBreakdown(userId, args);
+    }
+    if (toolName === 'detect_recurring_bills') {
+      return financeTools.detectRecurringBills(userId);
+    }
+    if (toolName === 'query_saving_goals') {
+      return financeTools.querySavingGoals(userId);
     }
     throw new Error(`Unknown tool: ${toolName}`);
   }
@@ -543,6 +525,53 @@ Call the appropriate tool based on user intent:
         }
       } else if (tool === 'query_loans_debts') {
         messages.push(`You have lent **${result.total_lent} ETB** and borrowed **${result.total_borrowed} ETB** across ${result.debts?.length || 0} active records.`);
+      } else if (tool === 'query_transactions') {
+        if (result.transactions && result.transactions.length > 0) {
+          const lines = result.transactions.slice(0, 7).map(
+            (t: any) => `- **${t.date}**: ${t.merchant} (${t.category}) — **${Number(t.amount).toLocaleString()} ETB** [${t.type}]`
+          );
+          messages.push(`Found **${result.total_matches}** transactions (Total: **${Number(result.total_sum).toLocaleString()} ETB**):\n\n` + lines.join('\n'));
+        } else {
+          messages.push(`No transactions matched your search criteria.`);
+        }
+      } else if (tool === 'search_merchant_spending') {
+        messages.push(`You have **${result.transaction_count}** transactions with **${result.merchant_query}** totaling **${Number(result.total_spent).toLocaleString()} ETB** (Average: **${Number(result.average_spend).toLocaleString()} ETB**).`);
+      } else if (tool === 'get_top_expenses') {
+        if (result.top_expenses && result.top_expenses.length > 0) {
+          const lines = result.top_expenses.map(
+            (e: any, i: number) => `${i + 1}. **${e.merchant}** (${e.category}): **${Number(e.amount).toLocaleString()} ETB** on ${e.date}`
+          );
+          messages.push(`Your top expenses for **${result.period}** are:\n\n` + lines.join('\n'));
+        } else {
+          messages.push(`No expense records found for ${result.period}.`);
+        }
+      } else if (tool === 'get_category_breakdown') {
+        if (result.categories && result.categories.length > 0) {
+          const lines = result.categories.map(
+            (c: any) => `- **${c.category}**: ${Number(c.amount).toLocaleString()} ETB (${c.percentage}%)`
+          );
+          messages.push(`Category breakdown for **${result.period}** (Total: **${Number(result.total_expense).toLocaleString()} ETB**):\n\n` + lines.join('\n'));
+        } else {
+          messages.push(`No category expense data available.`);
+        }
+      } else if (tool === 'detect_recurring_bills') {
+        if (result.has_recurring) {
+          const lines = result.recurring_bills.map(
+            (r: any) => `- **${r.merchant}** (${r.category}): ~**${Number(r.average_amount).toLocaleString()} ETB**/month (last paid ${r.last_charged})`
+          );
+          messages.push(`Identified recurring commitments (~**${Number(result.estimated_monthly_commitment).toLocaleString()} ETB**/month):\n\n` + lines.join('\n'));
+        } else {
+          messages.push(`No recurring subscriptions or repeat bills detected in the last 60 days.`);
+        }
+      } else if (tool === 'query_saving_goals') {
+        if (result.saving_goals && result.saving_goals.length > 0) {
+          const lines = result.saving_goals.map(
+            (g: any) => `- **${g.name}**: ${Number(g.current_amount).toLocaleString()} / ${Number(g.target_amount).toLocaleString()} ETB (${g.percentage_completed}% completed)`
+          );
+          messages.push(`Your saving goals:\n\n` + lines.join('\n'));
+        } else {
+          messages.push(`You currently have no saving goals configured.`);
+        }
       }
     }
 
@@ -581,6 +610,30 @@ Call the appropriate tool based on user intent:
       } else {
         text = `You currently have no recorded bank accounts or transactions in SW-budget. Connect SMS tracking or record accounts to track your balances.`;
       }
+    } else if (lower.includes('top') || lower.includes('biggest') || lower.includes('highest') || lower.includes('largest')) {
+      sendSse('tool_start', { tool: 'get_top_expenses', arguments: { period: 'this_month' } });
+      const res = await financeTools.getTopExpenses(userId, { period: 'this_month' });
+      sendSse('tool_end', { tool: 'get_top_expenses', result: res });
+      toolCalls.push({ tool: 'get_top_expenses', args: { period: 'this_month' }, result: res });
+      text = this.synthesizeToolResults(userContent, [{ tool: 'get_top_expenses', result: res }]);
+    } else if (lower.includes('category') || lower.includes('breakdown') || lower.includes('distribution')) {
+      sendSse('tool_start', { tool: 'get_category_breakdown', arguments: { period: 'this_month' } });
+      const res = await financeTools.getCategoryBreakdown(userId, { period: 'this_month' });
+      sendSse('tool_end', { tool: 'get_category_breakdown', result: res });
+      toolCalls.push({ tool: 'get_category_breakdown', args: { period: 'this_month' }, result: res });
+      text = this.synthesizeToolResults(userContent, [{ tool: 'get_category_breakdown', result: res }]);
+    } else if (lower.includes('recurring') || lower.includes('subscription') || lower.includes('bill')) {
+      sendSse('tool_start', { tool: 'detect_recurring_bills', arguments: {} });
+      const res = await financeTools.detectRecurringBills(userId);
+      sendSse('tool_end', { tool: 'detect_recurring_bills', result: res });
+      toolCalls.push({ tool: 'detect_recurring_bills', args: {}, result: res });
+      text = this.synthesizeToolResults(userContent, [{ tool: 'detect_recurring_bills', result: res }]);
+    } else if (lower.includes('goal') || lower.includes('saving')) {
+      sendSse('tool_start', { tool: 'query_saving_goals', arguments: {} });
+      const res = await financeTools.querySavingGoals(userId);
+      sendSse('tool_end', { tool: 'query_saving_goals', result: res });
+      toolCalls.push({ tool: 'query_saving_goals', args: {}, result: res });
+      text = this.synthesizeToolResults(userContent, [{ tool: 'query_saving_goals', result: res }]);
     } else if (lower.includes('plan') || lower.includes('allowance') || lower.includes('tomorrow')) {
       sendSse('tool_start', { tool: 'get_active_plan_snapshot', arguments: {} });
       const snap = await financeTools.getActivePlanSnapshot(userId);
@@ -633,6 +686,12 @@ Call the appropriate tool based on user intent:
         );
         text = `Here is your budget status for ${result.month}:\n` + summaries.join('\n');
       }
+    } else if (lower.includes('transaction') || lower.includes('history') || lower.includes('recent')) {
+      sendSse('tool_start', { tool: 'query_transactions', arguments: { limit: 10 } });
+      const res = await financeTools.queryTransactions(userId, { limit: 10 });
+      sendSse('tool_end', { tool: 'query_transactions', result: res });
+      toolCalls.push({ tool: 'query_transactions', args: { limit: 10 }, result: res });
+      text = this.synthesizeToolResults(userContent, [{ tool: 'query_transactions', result: res }]);
     } else {
       // General spending summary
       sendSse('tool_start', { tool: 'get_spending_summary', arguments: { period: 'this_month' } });

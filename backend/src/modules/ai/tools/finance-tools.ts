@@ -369,6 +369,393 @@ export class FinanceTools {
       currency: 'ETB',
     };
   }
+
+  /**
+   * Granular search and filtering of transactions by keyword, date range, period, category, account, or amount.
+   */
+  async queryTransactions(userId: string, args: {
+    query?: string;
+    period?: 'today' | 'this_week' | 'this_month' | 'last_month' | 'last_30_days' | 'year_to_date';
+    start_date?: string;
+    end_date?: string;
+    category_name?: string;
+    type?: 'EXPENSE' | 'INCOME' | 'TRANSFER';
+    min_amount?: number;
+    max_amount?: number;
+    limit?: number;
+  } = {}) {
+    const now = new Date();
+    let startDate: Date | undefined;
+    let endDate: Date | undefined;
+
+    if (args.start_date) {
+      startDate = new Date(args.start_date);
+    }
+    if (args.end_date) {
+      endDate = new Date(args.end_date);
+    }
+
+    if (!startDate && args.period) {
+      if (args.period === 'today') {
+        startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      } else if (args.period === 'this_week') {
+        const day = now.getDay();
+        const diff = now.getDate() - day + (day === 0 ? -6 : 1);
+        startDate = new Date(now.getFullYear(), now.getMonth(), diff);
+      } else if (args.period === 'this_month') {
+        startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+      } else if (args.period === 'last_month') {
+        startDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+        endDate = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59);
+      } else if (args.period === 'last_30_days') {
+        startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+      } else if (args.period === 'year_to_date') {
+        startDate = new Date(now.getFullYear(), 0, 1);
+      }
+    }
+
+    const where: any = {
+      userId,
+      deletedAt: null,
+    };
+
+    if (startDate || endDate) {
+      where.occurredAt = {};
+      if (startDate) where.occurredAt.gte = startDate;
+      if (endDate) where.occurredAt.lte = endDate;
+    }
+
+    if (args.type) {
+      where.type = { equals: args.type.toLowerCase(), mode: 'insensitive' };
+    }
+
+    if (args.min_amount !== undefined || args.max_amount !== undefined) {
+      where.amount = {};
+      if (args.min_amount !== undefined) where.amount.gte = args.min_amount;
+      if (args.max_amount !== undefined) where.amount.lte = args.max_amount;
+    }
+
+    if (args.query && args.query.trim()) {
+      const q = args.query.trim();
+      where.OR = [
+        { counterparty: { contains: q, mode: 'insensitive' } },
+        { note: { contains: q, mode: 'insensitive' } },
+      ];
+    }
+
+    if (args.category_name && args.category_name.trim()) {
+      where.category = {
+        name: { contains: args.category_name.trim(), mode: 'insensitive' },
+      };
+    }
+
+    const takeLimit = Math.min(args.limit || 10, 25);
+
+    const [txns, totalAggregate] = await Promise.all([
+      prisma.transaction.findMany({
+        where,
+        orderBy: { occurredAt: 'desc' },
+        take: takeLimit,
+        include: {
+          category: { select: { name: true } },
+          account: { select: { name: true, provider: true } },
+        },
+      }),
+      prisma.transaction.aggregate({
+        where,
+        _sum: { amount: true },
+        _count: { id: true },
+      }),
+    ]);
+
+    const formattedTxns = txns.map((t) => ({
+      id: t.id,
+      date: t.occurredAt.toISOString().split('T')[0],
+      amount: Number(t.amount),
+      type: t.type,
+      merchant: t.counterparty || 'Unknown',
+      category: t.category?.name || 'Uncategorized',
+      account: t.account ? `${t.account.name} (${t.account.provider})` : 'Unknown Account',
+      note: t.note || null,
+    }));
+
+    return {
+      total_matches: totalAggregate._count.id || 0,
+      total_sum: Math.round(Number(totalAggregate._sum.amount || 0) * 100) / 100,
+      currency: 'ETB',
+      returned_count: formattedTxns.length,
+      transactions: formattedTxns,
+    };
+  }
+
+  /**
+   * Analyzes spend frequency, totals, and line items with a specific merchant or counterparty.
+   */
+  async searchMerchantSpending(userId: string, args: { merchant_name: string; period?: string }) {
+    const q = args.merchant_name.trim();
+    const now = new Date();
+    let startDate: Date | undefined;
+
+    if (args.period === 'this_month') {
+      startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+    } else if (args.period === 'last_month') {
+      startDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    } else if (args.period === 'this_year') {
+      startDate = new Date(now.getFullYear(), 0, 1);
+    }
+
+    const where: any = {
+      userId,
+      deletedAt: null,
+      counterparty: { contains: q, mode: 'insensitive' },
+    };
+
+    if (startDate) {
+      where.occurredAt = { gte: startDate };
+    }
+
+    const txns = await prisma.transaction.findMany({
+      where,
+      orderBy: { occurredAt: 'desc' },
+      take: 15,
+      select: {
+        occurredAt: true,
+        amount: true,
+        counterparty: true,
+        type: true,
+      },
+    });
+
+    let totalExpense = 0;
+    let totalIncome = 0;
+    for (const t of txns) {
+      const amt = Number(t.amount);
+      if (t.type.toLowerCase() === 'expense') totalExpense += amt;
+      else if (t.type.toLowerCase() === 'income') totalIncome += amt;
+    }
+
+    const avgSpend = txns.length > 0 ? totalExpense / txns.length : 0;
+
+    return {
+      merchant_query: q,
+      transaction_count: txns.length,
+      total_spent: Math.round(totalExpense * 100) / 100,
+      total_income_from_merchant: Math.round(totalIncome * 100) / 100,
+      average_spend: Math.round(avgSpend * 100) / 100,
+      currency: 'ETB',
+      recent_transactions: txns.slice(0, 5).map((t) => ({
+        date: t.occurredAt.toISOString().split('T')[0],
+        amount: Number(t.amount),
+        type: t.type,
+      })),
+    };
+  }
+
+  /**
+   * Identifies the user's top largest expenses.
+   */
+  async getTopExpenses(userId: string, args: { period?: 'today' | 'this_week' | 'this_month' | 'last_month' | 'all_time'; limit?: number } = {}) {
+    const now = new Date();
+    let startDate: Date | undefined;
+    let endDate: Date | undefined;
+
+    if (args.period === 'today') {
+      startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    } else if (args.period === 'this_week') {
+      const day = now.getDay();
+      const diff = now.getDate() - day + (day === 0 ? -6 : 1);
+      startDate = new Date(now.getFullYear(), now.getMonth(), diff);
+    } else if (args.period === 'this_month') {
+      startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+    } else if (args.period === 'last_month') {
+      startDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      endDate = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59);
+    }
+
+    const where: any = {
+      userId,
+      deletedAt: null,
+      type: { equals: 'expense', mode: 'insensitive' },
+    };
+
+    if (startDate || endDate) {
+      where.occurredAt = {};
+      if (startDate) where.occurredAt.gte = startDate;
+      if (endDate) where.occurredAt.lte = endDate;
+    }
+
+    const limit = Math.min(args.limit || 5, 10);
+    const topTxns = await prisma.transaction.findMany({
+      where,
+      orderBy: { amount: 'desc' },
+      take: limit,
+      include: {
+        category: { select: { name: true } },
+      },
+    });
+
+    return {
+      period: args.period || 'this_month',
+      top_expenses: topTxns.map((t) => ({
+        date: t.occurredAt.toISOString().split('T')[0],
+        merchant: t.counterparty || 'Unknown',
+        category: t.category?.name || 'Uncategorized',
+        amount: Number(t.amount),
+      })),
+      currency: 'ETB',
+    };
+  }
+
+  /**
+   * Computes category-by-category spending allocation.
+   */
+  async getCategoryBreakdown(userId: string, args: { period?: 'this_month' | 'last_month' | 'this_week' } = {}) {
+    const now = new Date();
+    let startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+    let endDate: Date | undefined;
+
+    if (args.period === 'last_month') {
+      startDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      endDate = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59);
+    } else if (args.period === 'this_week') {
+      const day = now.getDay();
+      const diff = now.getDate() - day + (day === 0 ? -6 : 1);
+      startDate = new Date(now.getFullYear(), now.getMonth(), diff);
+    }
+
+    const where: any = {
+      userId,
+      deletedAt: null,
+      type: { equals: 'expense', mode: 'insensitive' },
+      occurredAt: { gte: startDate, ...(endDate ? { lte: endDate } : {}) },
+    };
+
+    const txns = await prisma.transaction.findMany({
+      where,
+      select: {
+        amount: true,
+        category: { select: { id: true, name: true, icon: true } },
+      },
+    });
+
+    const categoryMap = new Map<string, { name: string; icon: string | null; total: number; count: number }>();
+    let totalExpense = 0;
+
+    for (const t of txns) {
+      const amt = Number(t.amount);
+      totalExpense += amt;
+      const catName = t.category?.name || 'Uncategorized';
+      const existing = categoryMap.get(catName) || { name: catName, icon: t.category?.icon || null, total: 0, count: 0 };
+      existing.total += amt;
+      existing.count += 1;
+      categoryMap.set(catName, existing);
+    }
+
+    const breakdown = Array.from(categoryMap.values())
+      .map((c) => ({
+        category: c.name,
+        amount: Math.round(c.total * 100) / 100,
+        percentage: totalExpense > 0 ? Math.round((c.total / totalExpense) * 1000) / 10 : 0,
+        count: c.count,
+      }))
+      .sort((a, b) => b.amount - a.amount);
+
+    return {
+      period: args.period || 'this_month',
+      total_expense: Math.round(totalExpense * 100) / 100,
+      categories: breakdown,
+      currency: 'ETB',
+    };
+  }
+
+  /**
+   * Detects recurring subscriptions, regular bills, and monthly commitments.
+   */
+  async detectRecurringBills(userId: string) {
+    const sixtyDaysAgo = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000);
+    const txns = await prisma.transaction.findMany({
+      where: {
+        userId,
+        deletedAt: null,
+        type: { equals: 'expense', mode: 'insensitive' },
+        occurredAt: { gte: sixtyDaysAgo },
+      },
+      select: {
+        counterparty: true,
+        amount: true,
+        occurredAt: true,
+        category: { select: { name: true } },
+      },
+      orderBy: { occurredAt: 'desc' },
+    });
+
+    const merchantGroups = new Map<string, { merchant: string; amounts: number[]; category: string; latestDate: Date }>();
+    for (const t of txns) {
+      if (!t.counterparty || t.counterparty.trim().length === 0) continue;
+      const m = t.counterparty.trim();
+      const amt = Number(t.amount);
+      const existing = merchantGroups.get(m) || { merchant: m, amounts: [], category: t.category?.name || 'General', latestDate: t.occurredAt };
+      existing.amounts.push(amt);
+      merchantGroups.set(m, existing);
+    }
+
+    const recurring: any[] = [];
+    let estimatedMonthlyCommitment = 0;
+
+    for (const group of merchantGroups.values()) {
+      if (group.amounts.length >= 2) {
+        const avg = group.amounts.reduce((a, b) => a + b, 0) / group.amounts.length;
+        estimatedMonthlyCommitment += avg;
+        recurring.push({
+          merchant: group.merchant,
+          category: group.category,
+          average_amount: Math.round(avg * 100) / 100,
+          occurrences_last_60d: group.amounts.length,
+          last_charged: group.latestDate.toISOString().split('T')[0],
+        });
+      }
+    }
+
+    return {
+      recurring_bills: recurring,
+      estimated_monthly_commitment: Math.round(estimatedMonthlyCommitment * 100) / 100,
+      has_recurring: recurring.length > 0,
+      currency: 'ETB',
+    };
+  }
+
+  /**
+   * Retrieves active saving goals, targets, and progress.
+   */
+  async querySavingGoals(userId: string) {
+    const savingPlans = await prisma.savingPlan.findMany({
+      where: { userId, deletedAt: null },
+      include: { linkedAccount: true },
+      orderBy: { priority: 'asc' },
+    });
+
+    const goals = savingPlans.map((p) => {
+      const target = Number(p.targetAmount);
+      const current = p.linkedAccount ? Number(p.linkedAccount.lastKnownBalance || 0) : 0;
+      const remaining = Math.max(0, target - current);
+      const pct = target > 0 ? Math.round((current / target) * 100) : 0;
+      return {
+        id: p.id,
+        name: p.name,
+        target_amount: target,
+        current_amount: current,
+        remaining_amount: remaining,
+        percentage_completed: pct,
+        target_date: p.endDate ? p.endDate.toISOString().split('T')[0] : null,
+      };
+    });
+
+    return {
+      saving_goals: goals,
+      total_goals_count: goals.length,
+      currency: 'ETB',
+    };
+  }
 }
 
 export const financeTools = new FinanceTools();
@@ -473,6 +860,73 @@ export const GEMINI_TOOL_DECLARATIONS = [
   {
     name: 'query_reimbursements',
     description: 'Query expenses that have been reimbursed by friends or counterparties.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {},
+    },
+  },
+  {
+    name: 'query_transactions',
+    description: 'Search, filter, and inspect specific individual transactions by merchant name, note keyword, date window, category, type (EXPENSE/INCOME), or amount range.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        query: { type: 'STRING', description: 'Keyword to search across merchant name or note' },
+        period: { type: 'STRING', enum: ['today', 'this_week', 'this_month', 'last_month', 'last_30_days', 'year_to_date'], description: 'Time horizon' },
+        start_date: { type: 'STRING', description: 'Optional start date YYYY-MM-DD' },
+        end_date: { type: 'STRING', description: 'Optional end date YYYY-MM-DD' },
+        category_name: { type: 'STRING', description: 'Optional category name' },
+        type: { type: 'STRING', enum: ['EXPENSE', 'INCOME', 'TRANSFER'], description: 'Transaction type' },
+        min_amount: { type: 'NUMBER', description: 'Minimum amount filter' },
+        max_amount: { type: 'NUMBER', description: 'Maximum amount filter' },
+        limit: { type: 'NUMBER', description: 'Max number of transactions to return (1-25)' },
+      },
+    },
+  },
+  {
+    name: 'search_merchant_spending',
+    description: 'Analyze total spend, transaction frequency, and average spending with a specific merchant (e.g. Feres, Ride, Kaldis, Telebirr, Supermarket).',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        merchant_name: { type: 'STRING', description: 'The merchant or counterparty name to analyze' },
+        period: { type: 'STRING', enum: ['this_month', 'last_month', 'this_year', 'all_time'], description: 'Time period' },
+      },
+      required: ['merchant_name'],
+    },
+  },
+  {
+    name: 'get_top_expenses',
+    description: 'Retrieve the largest individual expense transactions for a given period.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        period: { type: 'STRING', enum: ['today', 'this_week', 'this_month', 'last_month', 'all_time'], description: 'Time period' },
+        limit: { type: 'NUMBER', description: 'How many top expenses to return (default 5)' },
+      },
+    },
+  },
+  {
+    name: 'get_category_breakdown',
+    description: 'Get total spend and percentage allocation for all expense categories.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        period: { type: 'STRING', enum: ['this_week', 'this_month', 'last_month'], description: 'Time period' },
+      },
+    },
+  },
+  {
+    name: 'detect_recurring_bills',
+    description: 'Detect recurring monthly subscriptions, regular bills, and periodic obligations (e.g. internet, rent, gym).',
+    parameters: {
+      type: 'OBJECT',
+      properties: {},
+    },
+  },
+  {
+    name: 'query_saving_goals',
+    description: 'Retrieve active saving goals, target amounts, current saved amounts, and completion percentages.',
     parameters: {
       type: 'OBJECT',
       properties: {},
@@ -603,6 +1057,91 @@ export const OPENAI_TOOL_DECLARATIONS = [
     function: {
       name: 'query_reimbursements',
       description: 'Query expenses that have been reimbursed by friends or counterparties.',
+      parameters: {
+        type: 'object',
+        properties: {},
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'query_transactions',
+      description: 'Search, filter, and inspect specific individual transactions by merchant name, note keyword, date window, category, type (EXPENSE/INCOME), or amount range.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Keyword to search across merchant name or note' },
+          period: { type: 'string', enum: ['today', 'this_week', 'this_month', 'last_month', 'last_30_days', 'year_to_date'], description: 'Time horizon' },
+          start_date: { type: 'string', description: 'Optional start date YYYY-MM-DD' },
+          end_date: { type: 'string', description: 'Optional end date YYYY-MM-DD' },
+          category_name: { type: 'string', description: 'Optional category name' },
+          type: { type: 'string', enum: ['EXPENSE', 'INCOME', 'TRANSFER'], description: 'Transaction type' },
+          min_amount: { type: 'number', description: 'Minimum amount filter' },
+          max_amount: { type: 'number', description: 'Maximum amount filter' },
+          limit: { type: 'number', description: 'Max number of transactions to return (1-25)' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'search_merchant_spending',
+      description: 'Analyze total spend, transaction frequency, and average spending with a specific merchant (e.g. Feres, Ride, Kaldis, Telebirr, Supermarket).',
+      parameters: {
+        type: 'object',
+        properties: {
+          merchant_name: { type: 'string', description: 'The merchant or counterparty name to analyze' },
+          period: { type: 'string', enum: ['this_month', 'last_month', 'this_year', 'all_time'], description: 'Time period' },
+        },
+        required: ['merchant_name'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_top_expenses',
+      description: 'Retrieve the largest individual expense transactions for a given period.',
+      parameters: {
+        type: 'object',
+        properties: {
+          period: { type: 'string', enum: ['today', 'this_week', 'this_month', 'last_month', 'all_time'], description: 'Time period' },
+          limit: { type: 'number', description: 'How many top expenses to return (default 5)' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_category_breakdown',
+      description: 'Get total spend and percentage allocation for all expense categories.',
+      parameters: {
+        type: 'object',
+        properties: {
+          period: { type: 'string', enum: ['this_week', 'this_month', 'last_month'], description: 'Time period' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'detect_recurring_bills',
+      description: 'Detect recurring monthly subscriptions, regular bills, and periodic obligations (e.g. internet, rent, gym).',
+      parameters: {
+        type: 'object',
+        properties: {},
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'query_saving_goals',
+      description: 'Retrieve active saving goals, target amounts, current saved amounts, and completion percentages.',
       parameters: {
         type: 'object',
         properties: {},
