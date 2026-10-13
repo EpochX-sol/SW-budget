@@ -44,8 +44,14 @@ class SyncNotifier extends StateNotifier<SyncState> {
 
   SyncNotifier(this._ref) : super(const SyncState());
 
-  Future<void> triggerSync() async {
-    if (state.isSyncing) return;
+  Future<SyncResult> triggerSync() async {
+    if (state.isSyncing) {
+      return SyncResult(
+        isSuccess: false,
+        errorMessage: 'Sync already in progress',
+        currentCursor: state.currentCursor,
+      );
+    }
 
     state = state.copyWith(status: SyncStatus.syncing, errorMessage: null);
 
@@ -58,6 +64,7 @@ class SyncNotifier extends StateNotifier<SyncState> {
           status: SyncStatus.synced,
           lastSyncTime: DateTime.now(),
           currentCursor: result.currentCursor,
+          unsyncedCount: 0,
         );
       } else {
         state = state.copyWith(
@@ -65,10 +72,17 @@ class SyncNotifier extends StateNotifier<SyncState> {
           errorMessage: result.errorMessage,
         );
       }
+      return result;
     } catch (e) {
+      final err = e.toString();
       state = state.copyWith(
         status: SyncStatus.error,
-        errorMessage: e.toString(),
+        errorMessage: err,
+      );
+      return SyncResult(
+        isSuccess: false,
+        errorMessage: err,
+        currentCursor: state.currentCursor,
       );
     }
   }

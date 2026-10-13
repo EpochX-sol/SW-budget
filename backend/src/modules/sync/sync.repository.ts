@@ -60,52 +60,70 @@ export class SyncRepository {
             const occurredAt = new Date(data.occurred_at || new Date());
             const targetAccountId = toDeterministicUuid(data.account_id);
             const targetCategoryId = data.category_id ? toDeterministicUuid(data.category_id) : null;
+            const dedupeKey = data.dedupe_key || `manual_${id}`;
 
-            await tx.transaction.upsert({
-              where: { id },
-              create: {
-                id,
+            // Strict Zero-Duplication: check for existing transaction by ID, dedupeKey, or account+reference
+            const existingTxn = await tx.transaction.findFirst({
+              where: {
                 userId,
-                accountId: targetAccountId,
-                categoryId: targetCategoryId,
-                type: data.type || 'expense',
-                amount,
-                balanceAfter,
-                counterparty: data.counterparty || null,
-                reference: data.reference || null,
-                note: data.note || null,
-                occurredAt,
-                source: data.source || 'sms',
-                parseConfidence: data.parse_confidence != null ? data.parse_confidence : null,
-                templateId: data.template_id || null,
-                balanceChainOk: data.balance_chain_ok ?? null,
-                gapBeforeAmount: data.gap_before_amount != null ? new Prisma.Decimal(data.gap_before_amount) : null,
-                isInternalTransfer: data.is_internal_transfer || false,
-                parentTxnId: data.parent_txn_id || null,
-                dedupeKey: data.dedupe_key || `manual_${id}`,
-                needsReview: data.needs_review || false,
-                userEditedFields: data.user_edited_fields || [],
-                changeSeq: itemSeq,
-              },
-              update: {
-                accountId: targetAccountId,
-                categoryId: targetCategoryId,
-                type: data.type || 'expense',
-                amount,
-                balanceAfter,
-                counterparty: data.counterparty || null,
-                reference: data.reference || null,
-                note: data.note || null,
-                occurredAt,
-                parseConfidence: data.parse_confidence != null ? data.parse_confidence : null,
-                balanceChainOk: data.balance_chain_ok ?? null,
-                gapBeforeAmount: data.gap_before_amount != null ? new Prisma.Decimal(data.gap_before_amount) : null,
-                needsReview: data.needs_review || false,
-                userEditedFields: data.user_edited_fields || [],
-                changeSeq: itemSeq,
-                deletedAt: null,
+                OR: [
+                  { id },
+                  { dedupeKey },
+                  ...(data.reference && targetAccountId ? [{ accountId: targetAccountId, reference: data.reference }] : []),
+                ],
               },
             });
+
+            if (existingTxn) {
+              await tx.transaction.update({
+                where: { id: existingTxn.id },
+                data: {
+                  accountId: targetAccountId,
+                  categoryId: targetCategoryId,
+                  type: data.type || 'expense',
+                  amount,
+                  balanceAfter,
+                  counterparty: data.counterparty || null,
+                  reference: data.reference || null,
+                  note: data.note || null,
+                  occurredAt,
+                  parseConfidence: data.parse_confidence != null ? data.parse_confidence : null,
+                  balanceChainOk: data.balance_chain_ok ?? null,
+                  gapBeforeAmount: data.gap_before_amount != null ? new Prisma.Decimal(data.gap_before_amount) : null,
+                  needsReview: data.needs_review || false,
+                  userEditedFields: data.user_edited_fields || [],
+                  changeSeq: itemSeq,
+                  deletedAt: null,
+                },
+              });
+            } else {
+              await tx.transaction.create({
+                data: {
+                  id,
+                  userId,
+                  accountId: targetAccountId,
+                  categoryId: targetCategoryId,
+                  type: data.type || 'expense',
+                  amount,
+                  balanceAfter,
+                  counterparty: data.counterparty || null,
+                  reference: data.reference || null,
+                  note: data.note || null,
+                  occurredAt,
+                  source: data.source || 'sms',
+                  parseConfidence: data.parse_confidence != null ? data.parse_confidence : null,
+                  templateId: data.template_id || null,
+                  balanceChainOk: data.balance_chain_ok ?? null,
+                  gapBeforeAmount: data.gap_before_amount != null ? new Prisma.Decimal(data.gap_before_amount) : null,
+                  isInternalTransfer: data.is_internal_transfer || false,
+                  parentTxnId: data.parent_txn_id ? toDeterministicUuid(data.parent_txn_id) : null,
+                  dedupeKey,
+                  needsReview: data.needs_review || false,
+                  userEditedFields: data.user_edited_fields || [],
+                  changeSeq: itemSeq,
+                },
+              });
+            }
 
             if (targetCategoryId && targetAccountId) {
               const dayStr = occurredAt.toISOString().slice(0, 10);
@@ -123,28 +141,45 @@ export class SyncRepository {
               data: { deletedAt: new Date(), changeSeq: itemSeq },
             });
           } else {
-            await tx.account.upsert({
-              where: { id },
-              create: {
-                id,
+            // Strict Zero-Duplication: check for existing account by ID, name, or provider+mask
+            const existingAccount = await tx.account.findFirst({
+              where: {
                 userId,
-                provider: data.provider,
-                name: data.name,
-                accountMask: data.account_mask || null,
-                lastKnownBalance: data.last_known_balance != null ? new Prisma.Decimal(data.last_known_balance) : null,
-                isSavings: data.is_savings || false,
-                changeSeq: itemSeq,
-              },
-              update: {
-                provider: data.provider,
-                name: data.name,
-                accountMask: data.account_mask || null,
-                lastKnownBalance: data.last_known_balance != null ? new Prisma.Decimal(data.last_known_balance) : null,
-                isSavings: data.is_savings || false,
-                changeSeq: itemSeq,
-                deletedAt: null,
+                OR: [
+                  { id },
+                  { name: data.name },
+                  ...(data.account_mask ? [{ provider: data.provider, accountMask: data.account_mask }] : []),
+                ],
               },
             });
+
+            if (existingAccount) {
+              await tx.account.update({
+                where: { id: existingAccount.id },
+                data: {
+                  provider: data.provider,
+                  name: data.name,
+                  accountMask: data.account_mask || existingAccount.accountMask,
+                  lastKnownBalance: data.last_known_balance != null ? new Prisma.Decimal(data.last_known_balance) : existingAccount.lastKnownBalance,
+                  isSavings: data.is_savings ?? existingAccount.isSavings,
+                  changeSeq: itemSeq,
+                  deletedAt: null,
+                },
+              });
+            } else {
+              await tx.account.create({
+                data: {
+                  id,
+                  userId,
+                  provider: data.provider,
+                  name: data.name,
+                  accountMask: data.account_mask || null,
+                  lastKnownBalance: data.last_known_balance != null ? new Prisma.Decimal(data.last_known_balance) : null,
+                  isSavings: data.is_savings || false,
+                  changeSeq: itemSeq,
+                },
+              });
+            }
           }
         } else if (entity === 'category') {
           if (op === 'delete') {
@@ -153,25 +188,43 @@ export class SyncRepository {
               data: { deletedAt: new Date(), changeSeq: itemSeq },
             });
           } else {
-            await tx.category.upsert({
-              where: { id },
-              create: {
-                id,
-                userId,
-                name: data.name,
-                icon: data.icon,
-                colorHex: data.color_hex,
-                isSystem: false,
-                changeSeq: itemSeq,
-              },
-              update: {
-                name: data.name,
-                icon: data.icon,
-                colorHex: data.color_hex,
-                changeSeq: itemSeq,
-                deletedAt: null,
+            // Strict Zero-Duplication: check for existing category by ID or name
+            const existingCategory = await tx.category.findFirst({
+              where: {
+                OR: [
+                  { id },
+                  { name: data.name, userId },
+                  { name: data.name, isSystem: true },
+                ],
               },
             });
+
+            if (existingCategory) {
+              if (!existingCategory.isSystem) {
+                await tx.category.update({
+                  where: { id: existingCategory.id },
+                  data: {
+                    name: data.name,
+                    icon: data.icon,
+                    colorHex: data.color_hex,
+                    changeSeq: itemSeq,
+                    deletedAt: null,
+                  },
+                });
+              }
+            } else {
+              await tx.category.create({
+                data: {
+                  id,
+                  userId,
+                  name: data.name,
+                  icon: data.icon,
+                  colorHex: data.color_hex,
+                  isSystem: false,
+                  changeSeq: itemSeq,
+                },
+              });
+            }
           }
         } else if (entity === 'limit') {
           if (op === 'delete') {
@@ -180,36 +233,53 @@ export class SyncRepository {
               data: { deletedAt: new Date(), changeSeq: itemSeq },
             });
           } else {
-            await tx.limit.upsert({
-              where: { id },
-              create: {
-                id,
+            const scopeType = data.scope_type || 'overall';
+            const scopeId = data.scope_id ? toDeterministicUuid(data.scope_id) : null;
+            const periodType = data.period_type;
+
+            // Strict Zero-Duplication: check for existing limit by ID or composite scope
+            const existingLimit = await tx.limit.findFirst({
+              where: {
                 userId,
-                scopeType: data.scope_type || 'overall',
-                scopeId: data.scope_id || null,
-                periodType: data.period_type,
-                startDate: data.start_date ? new Date(data.start_date) : null,
-                endDate: data.end_date ? new Date(data.end_date) : null,
-                amount: new Prisma.Decimal(data.amount || 0),
-                mode: data.mode || 'soft',
-                rollover: data.rollover || false,
-                alertThresholds: data.alert_thresholds || [50, 80, 100],
-                active: data.active ?? true,
-                changeSeq: itemSeq,
-              },
-              update: {
-                scopeType: data.scope_type || 'overall',
-                scopeId: data.scope_id || null,
-                periodType: data.period_type,
-                amount: new Prisma.Decimal(data.amount || 0),
-                mode: data.mode || 'soft',
-                rollover: data.rollover || false,
-                alertThresholds: data.alert_thresholds || [50, 80, 100],
-                active: data.active ?? true,
-                changeSeq: itemSeq,
-                deletedAt: null,
+                OR: [
+                  { id },
+                  { scopeType, scopeId, periodType },
+                ],
               },
             });
+
+            if (existingLimit) {
+              await tx.limit.update({
+                where: { id: existingLimit.id },
+                data: {
+                  amount: new Prisma.Decimal(data.amount || 0),
+                  mode: data.mode || 'soft',
+                  rollover: data.rollover || false,
+                  alertThresholds: data.alert_thresholds || [50, 80, 100],
+                  active: data.active ?? true,
+                  changeSeq: itemSeq,
+                  deletedAt: null,
+                },
+              });
+            } else {
+              await tx.limit.create({
+                data: {
+                  id,
+                  userId,
+                  scopeType,
+                  scopeId,
+                  periodType,
+                  startDate: data.start_date ? new Date(data.start_date) : null,
+                  endDate: data.end_date ? new Date(data.end_date) : null,
+                  amount: new Prisma.Decimal(data.amount || 0),
+                  mode: data.mode || 'soft',
+                  rollover: data.rollover || false,
+                  alertThresholds: data.alert_thresholds || [50, 80, 100],
+                  active: data.active ?? true,
+                  changeSeq: itemSeq,
+                },
+              });
+            }
           }
         } else if (entity === 'saving_plan') {
           if (op === 'delete') {
@@ -218,34 +288,49 @@ export class SyncRepository {
               data: { deletedAt: new Date(), changeSeq: itemSeq },
             });
           } else {
-            await tx.savingPlan.upsert({
-              where: { id },
-              create: {
-                id,
+            // Strict Zero-Duplication: check for existing saving plan by ID or name
+            const existingPlan = await tx.savingPlan.findFirst({
+              where: {
                 userId,
-                name: data.name,
-                periodType: data.period_type,
-                targetAmount: new Prisma.Decimal(data.target_amount || 0),
-                startDate: new Date(data.start_date || new Date()),
-                endDate: data.end_date ? new Date(data.end_date) : null,
-                ruleType: data.rule_type || 'fixed',
-                ruleValue: data.rule_value != null ? new Prisma.Decimal(data.rule_value) : null,
-                linkedAccountId: data.linked_account_id || null,
-                priority: data.priority || 3,
-                status: data.status || 'active',
-                changeSeq: itemSeq,
-              },
-              update: {
-                name: data.name,
-                targetAmount: new Prisma.Decimal(data.target_amount || 0),
-                ruleType: data.rule_type || 'fixed',
-                ruleValue: data.rule_value != null ? new Prisma.Decimal(data.rule_value) : null,
-                priority: data.priority || 3,
-                status: data.status || 'active',
-                changeSeq: itemSeq,
-                deletedAt: null,
+                OR: [
+                  { id },
+                  { name: data.name },
+                ],
               },
             });
+
+            if (existingPlan) {
+              await tx.savingPlan.update({
+                where: { id: existingPlan.id },
+                data: {
+                  targetAmount: new Prisma.Decimal(data.target_amount || 0),
+                  ruleType: data.rule_type || 'fixed',
+                  ruleValue: data.rule_value != null ? new Prisma.Decimal(data.rule_value) : null,
+                  priority: data.priority || 3,
+                  status: data.status || 'active',
+                  changeSeq: itemSeq,
+                  deletedAt: null,
+                },
+              });
+            } else {
+              await tx.savingPlan.create({
+                data: {
+                  id,
+                  userId,
+                  name: data.name,
+                  periodType: data.period_type || 'monthly',
+                  targetAmount: new Prisma.Decimal(data.target_amount || 0),
+                  startDate: new Date(data.start_date || new Date()),
+                  endDate: data.end_date ? new Date(data.end_date) : null,
+                  ruleType: data.rule_type || 'fixed',
+                  ruleValue: data.rule_value != null ? new Prisma.Decimal(data.rule_value) : null,
+                  linkedAccountId: data.linked_account_id ? toDeterministicUuid(data.linked_account_id) : null,
+                  priority: data.priority || 3,
+                  status: data.status || 'active',
+                  changeSeq: itemSeq,
+                },
+              });
+            }
           }
         } else if (entity === 'budget_plan') {
           if (op === 'delete') {

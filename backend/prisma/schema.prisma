@@ -91,6 +91,7 @@ model Account {
   transactions      Transaction[]
   savingPlans       SavingPlan[]
 
+  @@unique([userId, name])
   @@index([userId])
   @@map("accounts")
 }

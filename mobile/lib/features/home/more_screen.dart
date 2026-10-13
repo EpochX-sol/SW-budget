@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:intl/intl.dart';
 
 import '../../core/backup/backup_export_service.dart';
 import '../../core/security/auth_state.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/widgets/sheets/export_statement_sheet.dart';
+import '../../data/sync/sync_provider.dart';
 import '../activity/activity_providers.dart';
 
 class MoreScreen extends ConsumerWidget {
@@ -16,6 +18,7 @@ class MoreScreen extends ConsumerWidget {
     final authState = ref.watch(authStateProvider);
     final reviewCountAsync = ref.watch(reviewInboxCountProvider);
     final accountsAsync = ref.watch(accountsStreamProvider);
+    final syncState = ref.watch(syncStateProvider);
 
     final user = authState.userProfile;
     final displayName = user?['display_name'] as String? ?? (authState.status == AuthStatus.authenticated ? 'User' : 'Guest');
@@ -112,7 +115,11 @@ class MoreScreen extends ConsumerWidget {
                 ],
               ),
             ),
-            const SizedBox(height: 18),
+            const SizedBox(height: 14),
+
+            // Cloud Sync & Backend Update Card
+            _buildBackendSyncCard(context, ref, syncState),
+            const SizedBox(height: 14),
 
             // Menu Options List
             Container(
@@ -229,7 +236,7 @@ class MoreScreen extends ConsumerWidget {
         width: 38,
         height: 38,
         decoration: BoxDecoration(
-          color: iconColor.withOpacity(0.12),
+          color: iconColor.withValues(alpha: 0.12),
           borderRadius: BorderRadius.circular(10),
         ),
         alignment: Alignment.center,
@@ -252,7 +259,7 @@ class MoreScreen extends ConsumerWidget {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
               decoration: BoxDecoration(
-                color: (badgeColor ?? AppColors.accent).withOpacity(0.15),
+                color: (badgeColor ?? AppColors.accent).withValues(alpha: 0.15),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Text(
@@ -275,4 +282,240 @@ class MoreScreen extends ConsumerWidget {
       onTap: onTap,
     );
   }
+
+  Widget _buildBackendSyncCard(
+    BuildContext context,
+    WidgetRef ref,
+    SyncState syncState,
+  ) {
+    Color statusColor;
+    String statusLabel;
+    IconData statusIcon;
+
+    if (syncState.isSyncing) {
+      statusColor = AppColors.accent;
+      statusLabel = 'Syncing...';
+      statusIcon = Icons.sync_rounded;
+    } else if (syncState.hasError) {
+      statusColor = AppColors.expense;
+      statusLabel = 'Sync Alert';
+      statusIcon = Icons.error_outline_rounded;
+    } else if (syncState.lastSyncTime != null) {
+      statusColor = AppColors.income;
+      statusLabel = 'Cloud Synced';
+      statusIcon = Icons.cloud_done_outlined;
+    } else {
+      statusColor = AppColors.text3;
+      statusLabel = 'Ready to sync';
+      statusIcon = Icons.cloud_upload_outlined;
+    }
+
+    final formattedSyncTime = syncState.lastSyncTime != null
+        ? 'Last synced: ${DateFormat('MMM d, h:mm a').format(syncState.lastSyncTime!)}'
+        : 'Backend database has not been updated yet';
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: syncState.isSyncing
+              ? AppColors.accent.withValues(alpha: 0.4)
+              : AppColors.line,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  color: AppColors.accent.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                alignment: Alignment.center,
+                child: Icon(
+                  statusIcon,
+                  color: AppColors.accent,
+                  size: 20,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Cloud Sync & Backend Ledger',
+                      style: TextStyle(
+                        color: AppColors.text,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      formattedSyncTime,
+                      style: const TextStyle(
+                        color: AppColors.text3,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: statusColor.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: statusColor.withValues(alpha: 0.2)),
+                ),
+                child: Text(
+                  statusLabel,
+                  style: TextStyle(
+                    color: statusColor,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (syncState.hasError && syncState.errorMessage != null) ...[
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: AppColors.expenseBg,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                syncState.errorMessage!,
+                style: const TextStyle(
+                  color: AppColors.expense,
+                  fontSize: 11,
+                ),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+          const SizedBox(height: 14),
+          SizedBox(
+            width: double.infinity,
+            height: 44,
+            child: ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.surface2,
+                foregroundColor: AppColors.text,
+                elevation: 0,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  side: const BorderSide(color: AppColors.line2),
+                ),
+              ),
+              onPressed: syncState.isSyncing
+                  ? null
+                  : () async {
+                      final messenger = ScaffoldMessenger.of(context);
+                      final result = await ref
+                          .read(syncStateProvider.notifier)
+                          .triggerSync();
+
+                      if (!context.mounted) return;
+
+                      messenger.clearSnackBars();
+                      if (result.isSuccess) {
+                        messenger.showSnackBar(
+                          SnackBar(
+                            backgroundColor: const Color(0xFF13221C),
+                            content: Row(
+                              children: [
+                                const Icon(Icons.check_circle_rounded,
+                                    color: AppColors.income, size: 20),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Text(
+                                    result.pushedCount > 0
+                                        ? 'Backend updated: ${result.pushedCount} items safely pushed to cloud database.'
+                                        : 'Backend is up to date (0 new items needed).',
+                                    style: const TextStyle(
+                                      color: AppColors.text,
+                                      fontSize: 13,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            behavior: SnackBarBehavior.floating,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                              side: BorderSide(
+                                  color: AppColors.income.withValues(alpha: 0.3)),
+                            ),
+                          ),
+                        );
+                      } else {
+                        messenger.showSnackBar(
+                          SnackBar(
+                            backgroundColor: const Color(0xFF281316),
+                            content: Row(
+                              children: [
+                                const Icon(Icons.error_outline_rounded,
+                                    color: AppColors.expense, size: 20),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Text(
+                                    'Update failed: ${result.errorMessage ?? "Network error"}',
+                                    style: const TextStyle(
+                                      color: AppColors.text,
+                                      fontSize: 13,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            behavior: SnackBarBehavior.floating,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                              side: BorderSide(
+                                  color: AppColors.expense.withValues(alpha: 0.3)),
+                            ),
+                          ),
+                        );
+                      }
+                    },
+              icon: syncState.isSyncing
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: AppColors.accent,
+                      ),
+                    )
+                  : const Icon(Icons.cloud_upload_rounded,
+                      color: AppColors.accent, size: 18),
+              label: Text(
+                syncState.isSyncing
+                    ? 'Updating Backend...'
+                    : 'Update Backend',
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 0.2,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
+
