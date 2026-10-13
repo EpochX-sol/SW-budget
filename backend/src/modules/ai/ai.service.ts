@@ -180,16 +180,35 @@ export class AiService {
           const previousMessages = await prisma.aiMessage.findMany({
             where: { threadId: normalizedThreadId, id: { not: userMsg.id } },
             orderBy: { createdAt: 'desc' },
-            take: 6,
+            take: 10,
           });
           previousMessages.reverse();
 
+          // Build conversation history with tool-call context so the model
+          // understands what data was already fetched and what answers were given.
+          const historyMessages: any[] = [];
+          for (const m of previousMessages) {
+            if (m.role === 'user') {
+              historyMessages.push({ role: 'user', content: m.content });
+            } else {
+              // For assistant messages, include a summary of tool calls so the
+              // model knows what data was already retrieved.
+              let enrichedContent = m.content || '';
+              if (m.toolCalls && Array.isArray(m.toolCalls) && (m.toolCalls as any[]).length > 0) {
+                const toolSummary = (m.toolCalls as any[]).map((tc: any) => {
+                  const toolName = tc.tool || 'unknown';
+                  const resultPreview = tc.result ? JSON.stringify(tc.result).slice(0, 300) : 'no result';
+                  return `[Tool: ${toolName} → ${resultPreview}]`;
+                }).join('\n');
+                enrichedContent = `${enrichedContent}\n\n<tool_context>\n${toolSummary}\n</tool_context>`;
+              }
+              historyMessages.push({ role: 'assistant', content: enrichedContent });
+            }
+          }
+
           const messages: any[] = [
             { role: 'system', content: this.buildSystemPrompt(relevantMemories) },
-            ...previousMessages.map((m) => ({
-              role: m.role === 'user' ? 'user' : 'assistant',
-              content: m.content,
-            })),
+            ...historyMessages,
             { role: 'user', content: userContent },
           ];
 
@@ -269,9 +288,66 @@ export class AiService {
 
           tokensUsed = Math.max(tokensUsed, 350 + toolCallsExecuted.length * 80);
 
+          // If the model returned tool data but no final text, retry with a
+          // focused synthesis prompt (no tools) so the model is forced to
+          // answer the user's actual question using the data.
+          if ((!assistantText || !assistantText.trim()) && toolCallsExecuted.length > 0) {
+            console.warn('OpenRouter finished without final text. Attempting synthesis retry...');
+            try {
+              const toolDataSummary = toolCallsExecuted.map((tc: any) => {
+                return `Tool "${tc.tool}" returned:\n${JSON.stringify(tc.result, null, 2)}`;
+              }).join('\n\n');
+
+              const synthesisMessages = [
+                {
+                  role: 'system' as const,
+                  content: `You are a concise Ethiopian financial coach. The user asked a question and financial tools have already gathered the data below. Your ONLY job is to answer the user's question using this data. Follow the 3-step format: 1) Bold headline with exact figures, 2) 2-4 bullet breakdown, 3) One actionable recommendation. Currency is ETB.`,
+                },
+                {
+                  role: 'user' as const,
+                  content: `User's question: "${userContent}"\n\nTool data gathered:\n${toolDataSummary}\n\nPlease answer the user's question based on this data.`,
+                },
+              ];
+
+              const synthController = new AbortController();
+              const synthTimeout = setTimeout(() => synthController.abort(), 20000);
+              const synthRes = await fetch(openRouterUrl, {
+                method: 'POST',
+                signal: synthController.signal,
+                headers: {
+                  'Authorization': `Bearer ${env.OPENROUTER_API_KEY}`,
+                  'Content-Type': 'application/json',
+                  'HTTP-Referer': 'https://sw-budget.local',
+                  'X-Title': 'SW-Budget AI Coach',
+                },
+                body: JSON.stringify({
+                  model: env.OPENROUTER_MODEL,
+                  messages: synthesisMessages,
+                  temperature: 0.3,
+                  // No tools — force a text response
+                }),
+              }).finally(() => clearTimeout(synthTimeout));
+
+              if (synthRes.ok) {
+                const synthCompletion = (await synthRes.json()) as any;
+                const synthContent = synthCompletion.choices?.[0]?.message?.content;
+                if (synthContent && synthContent.trim()) {
+                  assistantText = synthContent;
+                  tokensUsed += synthCompletion.usage?.total_tokens || 200;
+                }
+              }
+            } catch (synthErr: any) {
+              console.warn('Synthesis retry also failed:', synthErr.message);
+            }
+          }
+
+          // Final fallback: deterministic synthesis from tool data
           if (!assistantText || !assistantText.trim()) {
-            console.warn('OpenRouter finished without final text. Synthesizing from tool calls...');
+            console.warn('All model attempts failed. Using deterministic synthesis...');
             assistantText = this.synthesizeToolResults(userContent, toolCallsExecuted);
+          }
+
+          if (assistantText && assistantText.trim()) {
             const parts = assistantText.match(/.{1,60}(\s|$)/g) || [assistantText];
             for (const part of parts) {
               sendSse('delta', { text: part, content: part, type: 'token' });
@@ -557,7 +633,7 @@ Format EVERY response following this crisp 3-step executive structure:
       return "I analyzed your request, but could not retrieve matching financial data. Please ensure your accounts or transactions are recorded.";
     }
 
-    const messages: string[] = [];
+    const dataBlocks: string[] = [];
     for (const call of toolCalls) {
       const { tool, result } = call;
       if (!result) continue;
@@ -567,90 +643,115 @@ Format EVERY response following this crisp 3-step executive structure:
           const lines = result.accounts.map(
             (a: any) => `- **${a.name}** (${a.provider}${a.account_mask ? ' ' + a.account_mask : ''}): **${Number(a.balance).toLocaleString()} ETB**`
           );
-          messages.push(`Your total balance is **${Number(result.total_balance).toLocaleString()} ETB** (Liquid: ${Number(result.total_liquid_balance).toLocaleString()} ETB, Savings: ${Number(result.total_savings_balance).toLocaleString()} ETB):\n\n` + lines.join('\n'));
+          dataBlocks.push(`Your total balance is **${Number(result.total_balance).toLocaleString()} ETB** (Liquid: ${Number(result.total_liquid_balance).toLocaleString()} ETB, Savings: ${Number(result.total_savings_balance).toLocaleString()} ETB):\n\n` + lines.join('\n'));
         } else if (result.has_transactions) {
-          messages.push(`Across your recorded transactions, your net balance is **${Number(result.all_time_net_savings).toLocaleString()} ETB** (Total Income: ${Number(result.total_recorded_income).toLocaleString()} ETB, Total Expenses: ${Number(result.total_recorded_expense).toLocaleString()} ETB).`);
+          dataBlocks.push(`Across your recorded transactions, your net balance is **${Number(result.all_time_net_savings).toLocaleString()} ETB** (Total Income: ${Number(result.total_recorded_income).toLocaleString()} ETB, Total Expenses: ${Number(result.total_recorded_expense).toLocaleString()} ETB).`);
         } else {
-          messages.push(`You currently have no recorded bank accounts or transactions in SW-budget. Connect SMS tracking or record accounts to track your balances.`);
+          dataBlocks.push(`You currently have no recorded bank accounts or transactions in SW-budget. Connect SMS tracking or record accounts to track your balances.`);
         }
       } else if (tool === 'get_spending_summary') {
-        messages.push(`For the period **${result.period}**, your total spending is **${Number(result.total_expense).toLocaleString()} ETB** across ${result.transaction_count} transactions, with **${Number(result.total_income).toLocaleString()} ETB** in income (Net: **${Number(result.net_savings).toLocaleString()} ETB**).`);
+        dataBlocks.push(`For the period **${result.period}**, your total spending is **${Number(result.total_expense).toLocaleString()} ETB** across ${result.transaction_count} transactions, with **${Number(result.total_income).toLocaleString()} ETB** in income (Net: **${Number(result.net_savings).toLocaleString()} ETB**).`);
       } else if (tool === 'simulate_scenario') {
         if (result.has_limit && result.limit_breached) {
-          messages.push(`Spending **${Number(result.proposed_amount).toLocaleString()} ETB** will exceed your monthly limit! You have ${Number(result.remaining_before).toLocaleString()} ETB remaining before exceeding.`);
+          dataBlocks.push(`Spending **${Number(result.proposed_amount).toLocaleString()} ETB** will exceed your monthly limit! You have ${Number(result.remaining_before).toLocaleString()} ETB remaining before exceeding.`);
         } else if (result.has_limit) {
-          messages.push(`You can safely spend **${Number(result.proposed_amount).toLocaleString()} ETB**. Remaining allowance will be ${Number(result.remaining_after).toLocaleString()} ETB.`);
+          dataBlocks.push(`You can safely spend **${Number(result.proposed_amount).toLocaleString()} ETB**. Remaining allowance will be ${Number(result.remaining_after).toLocaleString()} ETB.`);
         } else {
-          messages.push(`Adding **${Number(result.proposed_amount).toLocaleString()} ETB** brings your total to ${Number(result.simulated_total).toLocaleString()} ETB.`);
+          dataBlocks.push(`Adding **${Number(result.proposed_amount).toLocaleString()} ETB** brings your total to ${Number(result.simulated_total).toLocaleString()} ETB.`);
         }
       } else if (tool === 'get_budget_status') {
         if (result.active_limits && result.active_limits.length > 0) {
           const lines = result.active_limits.map(
             (l: any) => `- **${l.scope_name}**: ${Number(l.spent).toLocaleString()} / ${Number(l.limit_amount).toLocaleString()} ETB (${l.percentage_used}% used)`
           );
-          messages.push(`Here is your budget status for **${result.month}**:\n` + lines.join('\n'));
+          dataBlocks.push(`Here is your budget status for **${result.month}**:\n` + lines.join('\n'));
         } else {
-          messages.push(`You currently have no active budget limits configured.`);
+          dataBlocks.push(`You currently have no active budget limits configured.`);
         }
       } else if (tool === 'get_active_plan_snapshot') {
         if (result.has_active_plan) {
-          messages.push(`Your active plan is **"${result.plan_name}"**. Today's allowance: **${result.allowance_today} ETB** (${result.spent_today} ETB spent). Tomorrow's allowance: **${result.tomorrow_allowance} ETB**.`);
+          dataBlocks.push(`Your active plan is **"${result.plan_name}"**. Today's allowance: **${result.allowance_today} ETB** (${result.spent_today} ETB spent). Tomorrow's allowance: **${result.tomorrow_allowance} ETB**.`);
         } else {
-          messages.push(`You do not have an active spending plan configured yet.`);
+          dataBlocks.push(`You do not have an active spending plan configured yet.`);
         }
       } else if (tool === 'query_loans_debts') {
-        messages.push(`You have lent **${result.total_lent} ETB** and borrowed **${result.total_borrowed} ETB** across ${result.debts?.length || 0} active records.`);
+        dataBlocks.push(`You have lent **${result.total_lent} ETB** and borrowed **${result.total_borrowed} ETB** across ${result.debts?.length || 0} active records.`);
       } else if (tool === 'query_transactions') {
         if (result.transactions && result.transactions.length > 0) {
           const lines = result.transactions.slice(0, 7).map(
             (t: any) => `- **${t.date}**: ${t.merchant} (${t.category}) — **${Number(t.amount).toLocaleString()} ETB** [${t.type}]`
           );
-          messages.push(`Found **${result.total_matches}** transactions (Total: **${Number(result.total_sum).toLocaleString()} ETB**):\n\n` + lines.join('\n'));
+          dataBlocks.push(`Found **${result.total_matches}** transactions (Total: **${Number(result.total_sum).toLocaleString()} ETB**):\n\n` + lines.join('\n'));
         } else {
-          messages.push(`No transactions matched your search criteria.`);
+          dataBlocks.push(`No transactions matched your search criteria.`);
         }
       } else if (tool === 'search_merchant_spending') {
-        messages.push(`You have **${result.transaction_count}** transactions with **${result.merchant_query}** totaling **${Number(result.total_spent).toLocaleString()} ETB** (Average: **${Number(result.average_spend).toLocaleString()} ETB**).`);
+        dataBlocks.push(`You have **${result.transaction_count}** transactions with **${result.merchant_query}** totaling **${Number(result.total_spent).toLocaleString()} ETB** (Average: **${Number(result.average_spend).toLocaleString()} ETB**).`);
       } else if (tool === 'get_top_expenses') {
         if (result.top_expenses && result.top_expenses.length > 0) {
           const lines = result.top_expenses.map(
             (e: any, i: number) => `${i + 1}. **${e.merchant}** (${e.category}): **${Number(e.amount).toLocaleString()} ETB** on ${e.date}`
           );
-          messages.push(`Your top expenses for **${result.period}** are:\n\n` + lines.join('\n'));
+          dataBlocks.push(`Your top expenses for **${result.period}** are:\n\n` + lines.join('\n'));
         } else {
-          messages.push(`No expense records found for ${result.period}.`);
+          dataBlocks.push(`No expense records found for ${result.period}.`);
         }
       } else if (tool === 'get_category_breakdown') {
         if (result.categories && result.categories.length > 0) {
           const lines = result.categories.map(
             (c: any) => `- **${c.category}**: ${Number(c.amount).toLocaleString()} ETB (${c.percentage}%)`
           );
-          messages.push(`Category breakdown for **${result.period}** (Total: **${Number(result.total_expense).toLocaleString()} ETB**):\n\n` + lines.join('\n'));
+          dataBlocks.push(`Category breakdown for **${result.period}** (Total: **${Number(result.total_expense).toLocaleString()} ETB**):\n\n` + lines.join('\n'));
         } else {
-          messages.push(`No category expense data available.`);
+          dataBlocks.push(`No category expense data available.`);
         }
       } else if (tool === 'detect_recurring_bills') {
         if (result.has_recurring) {
           const lines = result.recurring_bills.map(
             (r: any) => `- **${r.merchant}** (${r.category}): ~**${Number(r.average_amount).toLocaleString()} ETB**/month (last paid ${r.last_charged})`
           );
-          messages.push(`Identified recurring commitments (~**${Number(result.estimated_monthly_commitment).toLocaleString()} ETB**/month):\n\n` + lines.join('\n'));
+          dataBlocks.push(`Identified recurring commitments (~**${Number(result.estimated_monthly_commitment).toLocaleString()} ETB**/month):\n\n` + lines.join('\n'));
         } else {
-          messages.push(`No recurring subscriptions or repeat bills detected in the last 60 days.`);
+          dataBlocks.push(`No recurring subscriptions or repeat bills detected in the last 60 days.`);
         }
       } else if (tool === 'query_saving_goals') {
         if (result.saving_goals && result.saving_goals.length > 0) {
           const lines = result.saving_goals.map(
             (g: any) => `- **${g.name}**: ${Number(g.current_amount).toLocaleString()} / ${Number(g.target_amount).toLocaleString()} ETB (${g.percentage_completed}% completed)`
           );
-          messages.push(`Your saving goals:\n\n` + lines.join('\n'));
+          dataBlocks.push(`Your saving goals:\n\n` + lines.join('\n'));
         } else {
-          messages.push(`You currently have no saving goals configured.`);
+          dataBlocks.push(`You currently have no saving goals configured.`);
         }
       }
     }
 
-    return messages.length > 0 ? messages.join('\n\n') : "I processed your financial query. Let me know if you would like more details!";
+    if (dataBlocks.length === 0) {
+      return "I processed your financial query. Let me know if you would like more details!";
+    }
+
+    const dataSection = dataBlocks.join('\n\n');
+
+    // Try to provide a contextual response based on the user's question
+    const lower = userContent.toLowerCase();
+    const isAdviceQuestion = lower.includes('advice') || lower.includes('sustain') || lower.includes('how to') || lower.includes('recommend') || lower.includes('suggest') || lower.includes('help') || lower.includes('should');
+    const isComparisonOrFollowUp = lower.includes('starting from') || lower.includes('no i') || lower.includes('i said') || lower.includes('i meant') || lower.includes('what about');
+
+    if (isAdviceQuestion || isComparisonOrFollowUp) {
+      // Extract key financial numbers for contextual advice
+      const balanceData = toolCalls.find((tc: any) => tc.tool === 'get_account_balances')?.result;
+      const spendingData = toolCalls.find((tc: any) => tc.tool === 'get_spending_summary')?.result;
+      const totalBalance = balanceData?.total_balance || 0;
+
+      const now = new Date();
+      const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+      const daysRemaining = Math.max(1, daysInMonth - now.getDate());
+      const dailyBudget = totalBalance > 0 ? Math.floor(totalBalance / daysRemaining) : 0;
+
+      return `${dataSection}\n\n**My Recommendation:**\nWith **${Number(totalBalance).toLocaleString()} ETB** available and **${daysRemaining} days** remaining this month, your safe daily spending limit is approximately **${Number(dailyBudget).toLocaleString()} ETB/day**. ${spendingData && spendingData.total_expense > 0 ? `You have already spent ${Number(spendingData.total_expense).toLocaleString()} ETB this month across ${spendingData.transaction_count} transactions.` : ''} Focus on essentials, avoid impulse purchases, and track every transaction to stay on pace.`;
+    }
+
+    return dataSection;
   }
 
   /**
@@ -768,13 +869,36 @@ Format EVERY response following this crisp 3-step executive structure:
       toolCalls.push({ tool: 'query_transactions', args: { limit: 10 }, result: res });
       text = this.synthesizeToolResults(userContent, [{ tool: 'query_transactions', result: res }]);
     } else {
-      // General spending summary
-      sendSse('tool_start', { tool: 'get_spending_summary', arguments: { period: 'this_month' } });
-      const result = await financeTools.getSpendingSummary(userId, { period: 'this_month' });
-      sendSse('tool_end', { tool: 'get_spending_summary', result });
-      toolCalls.push({ tool: 'get_spending_summary', args: { period: 'this_month' }, result });
+      // For advice, follow-up, or general questions: fetch both balance and spending data
+      // to give a comprehensive contextual response instead of a generic spending summary.
+      const isAdviceOrFollowUp = lower.includes('advice') || lower.includes('sustain') ||
+        lower.includes('how to') || lower.includes('recommend') || lower.includes('suggest') ||
+        lower.includes('help me') || lower.includes('should') || lower.includes('no i') ||
+        lower.includes('i said') || lower.includes('i meant') || lower.includes('what about') ||
+        lower.includes('starting from');
 
-      text = `This month you have spent a total of ${result.total_expense.toLocaleString()} ETB across ${result.transaction_count} transactions, with ${result.total_income.toLocaleString()} ETB in recorded income. Your net balance is ${result.net_savings.toLocaleString()} ETB.`;
+      if (isAdviceOrFollowUp) {
+        // Gather comprehensive financial picture
+        sendSse('tool_start', { tool: 'get_account_balances', arguments: {} });
+        const balanceRes = await financeTools.getAccountBalances(userId);
+        sendSse('tool_end', { tool: 'get_account_balances', result: balanceRes });
+        toolCalls.push({ tool: 'get_account_balances', args: {}, result: balanceRes });
+
+        sendSse('tool_start', { tool: 'get_spending_summary', arguments: { period: 'this_month' } });
+        const spendRes = await financeTools.getSpendingSummary(userId, { period: 'this_month' });
+        sendSse('tool_end', { tool: 'get_spending_summary', result: spendRes });
+        toolCalls.push({ tool: 'get_spending_summary', args: { period: 'this_month' }, result: spendRes });
+
+        text = this.synthesizeToolResults(userContent, toolCalls);
+      } else {
+        // General spending summary for truly generic queries
+        sendSse('tool_start', { tool: 'get_spending_summary', arguments: { period: 'this_month' } });
+        const result = await financeTools.getSpendingSummary(userId, { period: 'this_month' });
+        sendSse('tool_end', { tool: 'get_spending_summary', result });
+        toolCalls.push({ tool: 'get_spending_summary', args: { period: 'this_month' }, result });
+
+        text = `This month you have spent a total of ${result.total_expense.toLocaleString()} ETB across ${result.transaction_count} transactions, with ${result.total_income.toLocaleString()} ETB in recorded income. Your net balance is ${result.net_savings.toLocaleString()} ETB.`;
+      }
     }
 
     // Stream text in 2-3 natural chunks
