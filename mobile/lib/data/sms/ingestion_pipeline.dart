@@ -7,6 +7,9 @@ import '../../domain/use_cases/balance_chain_verifier.dart';
 import '../../domain/use_cases/dedupe_engine.dart';
 import 'models/raw_financial_message.dart';
 import 'sources/transaction_source.dart';
+import '../../core/notifications/notification_service.dart';
+import '../../core/notifications/notification_settings_service.dart';
+import '../../core/notifications/budget_alert_service.dart';
 
 /// Pipeline coordinating raw SMS/Notification capture, parser evaluation,
 /// deduplication, account matching, balance-chain verification, and database persistence.
@@ -62,6 +65,13 @@ class IngestionPipeline {
         body: msg.body,
         receivedAt: msg.receivedAt,
         reason: parseResult.failureReason ?? 'Unrecognized bank SMS pattern',
+      );
+      unawaited(
+        NotificationService.instance.showFailedParseReviewNotification(
+          reviewId: msg.id,
+          bankName: msg.sender,
+          messageBody: msg.body,
+        ),
       );
       return null;
     }
@@ -136,9 +146,59 @@ class IngestionPipeline {
     // 7. Synchronize Account Balance to the most recent chronological transaction
     _database.syncAccountBalanceFromLatestTransaction(accountId);
 
+    // 8. Totals On-Device Notification & Budget Alerts
+    unawaited(_notifyTransactionAndBudgets(txn, transactionId));
+
     _parsedStreamController.add(parseResult);
 
     return _database.findTransactionByDedupeKey(dedupeKey);
+  }
+
+  Future<void> _notifyTransactionAndBudgets(
+    dynamic txn,
+    String transactionId,
+  ) async {
+    try {
+      final isCredit =
+          txn.type.toString().toLowerCase() == 'income' || txn.type.toString().toUpperCase() == 'CREDIT';
+      final quickCatIds = isCredit
+          ? await NotificationSettingsService.instance.getQuickCategorizeIncomeIds()
+          : await NotificationSettingsService.instance.getQuickCategorizeExpenseIds();
+
+      final allCategories = _database.getCategories();
+      final quickCategories = <Map<String, String>>[];
+      for (final id in quickCatIds) {
+        final match = allCategories.where((c) => c['id']?.toString() == id).firstOrNull;
+        if (match != null) {
+          quickCategories.add({
+            'id': match['id'].toString(),
+            'name': match['name'].toString(),
+          });
+        }
+      }
+
+      if (quickCategories.isEmpty) {
+        for (final cat in allCategories.take(3)) {
+          quickCategories.add({
+            'id': cat['id'].toString(),
+            'name': cat['name'].toString(),
+          });
+        }
+      }
+
+      final ref = txn.reference?.toString() ?? transactionId;
+
+      await NotificationService.instance.showTransactionNotification(
+        reference: ref,
+        amount: (txn.amount as num).toDouble(),
+        type: txn.type.toString(),
+        counterparty: txn.counterparty?.toString(),
+        bankName: txn.provider?.toString(),
+        quickCategories: quickCategories,
+      );
+
+      await BudgetAlertService.instance.checkAndNotifyBudgetAlerts(_database);
+    } catch (_) {}
   }
 
   /// Matches existing provider account or auto-creates one

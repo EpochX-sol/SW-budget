@@ -1,17 +1,4 @@
-import crypto from 'node:crypto';
 import { prisma } from '../../db/prisma.js';
-
-import admin from 'firebase-admin';
-
-let firebaseApp: admin.app.App | null = null;
-if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
-  try {
-    const cred = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
-    firebaseApp = admin.initializeApp({ credential: admin.credential.cert(cred) }, 'sw-budget');
-  } catch (err) {
-    console.warn('Failed to parse FIREBASE_SERVICE_ACCOUNT_KEY:', err);
-  }
-}
 
 export interface DispatchNotificationInput {
   userId: string;
@@ -40,6 +27,7 @@ export interface DispatchNotificationInput {
 export class NotificationService {
   /**
    * Dispatches a notification obeying quiet hours, daily caps, privacy masking, and deduplication.
+   * Records strictly to PostgreSQL without external push services.
    */
   async dispatchNotification(input: DispatchNotificationInput) {
     const { userId, type, dedupeKey } = input;
@@ -60,33 +48,30 @@ export class NotificationService {
     let prefs = await prisma.notificationPreference.findUnique({
       where: { userId },
     });
+
     if (!prefs) {
       prefs = await prisma.notificationPreference.create({
         data: { userId },
       });
     }
 
-    if (!prefs.enabled && input.priority !== 'urgent') {
-      return { dispatched: false, reason: 'notifications_disabled' };
-    }
-
-    // 3. Evaluate quiet hours (e.g. 22:00 to 07:00; urgent security alerts bypass)
-    if (input.priority !== 'urgent') {
+    // 3. Evaluate Quiet Hours (bypass for security_alert or urgent priority)
+    if (prefs.enabled && input.priority !== 'urgent' && type !== 'security_alert') {
       const isQuiet = this.isQuietTime(prefs.quietStart, prefs.quietEnd);
       if (isQuiet) {
         return { dispatched: false, reason: 'quiet_hours_active' };
       }
     }
 
-    // 4. Evaluate daily non-urgent cap (default 5/day)
-    if (input.priority !== 'urgent') {
-      const todayStart = new Date();
-      todayStart.setHours(0, 0, 0, 0);
+    // 4. Evaluate Daily Cap
+    if (prefs.dailyCap > 0 && input.priority !== 'urgent') {
+      const startOfDay = new Date();
+      startOfDay.setHours(0, 0, 0, 0);
 
       const countToday = await prisma.notification.count({
         where: {
           userId,
-          createdAt: { gte: todayStart },
+          createdAt: { gte: startOfDay },
         },
       });
 
@@ -98,59 +83,13 @@ export class NotificationService {
     // 5. Apply Lock-Screen Amount Privacy Masking
     let finalBody = input.body;
     if (!prefs.showAmounts && input.amount !== undefined) {
-      // Replace sensitive amounts with generic privacy phrasing
       finalBody = finalBody.replace(
         /ETB\s?[\d,]+(\.\d+)?|\d+[\d,]*(\.\d+)?\s?ETB/gi,
         'your configured limit'
       );
     }
 
-    // 6. Push delivery via Firebase Cloud Messaging if channel is push
-    let deliveryStatus = 'delivered';
-    if (input.channel === 'push') {
-      const devices = await prisma.device.findMany({
-        where: { userId, pushEnabled: true, fcmToken: { not: null } },
-        select: { id: true, fcmToken: true },
-      });
-
-      const tokens = devices.map((d: { fcmToken: any; }) => d.fcmToken).filter(Boolean) as string[];
-
-      if (tokens.length > 0 && firebaseApp) {
-        try {
-          const response = await firebaseApp.messaging().sendEachForMulticast({
-            tokens,
-            notification: {
-              title: input.title,
-              body: finalBody,
-            },
-            data: {
-              type: input.type,
-              route: input.route || '',
-              ...(input.data ? Object.fromEntries(Object.entries(input.data).map(([k, v]) => [k, String(v)])) : {}),
-            },
-          });
-
-          // Cleanup stale tokens
-          for (let i = 0; i < response.responses.length; i++) {
-            const resp = response.responses[i];
-            if (!resp.success && resp.error?.code === 'messaging/registration-token-not-registered') {
-              const staleDeviceId = devices[i]?.id;
-              if (staleDeviceId) {
-                await prisma.device.update({
-                  where: { id: staleDeviceId },
-                  data: { fcmToken: null },
-                });
-              }
-            }
-          }
-        } catch (fcmErr) {
-          console.warn('FCM dispatch failed, logging delivery as degraded:', fcmErr);
-          deliveryStatus = 'degraded';
-        }
-      }
-    }
-
-    // 7. Record notification to in-app database
+    // 6. Record notification to in-app database
     const notification = await prisma.notification.create({
       data: {
         userId,
@@ -162,7 +101,7 @@ export class NotificationService {
         data: input.data || {},
         route: input.route,
         dedupeKey: input.dedupeKey,
-        deliveryStatus,
+        deliveryStatus: 'delivered',
         sentAt: new Date(),
       },
     });
@@ -180,24 +119,15 @@ export class NotificationService {
     const [startH, startM] = startStr.split(':').map(Number);
     const [endH, endM] = endStr.split(':').map(Number);
 
-    const startMinutes = startH * 60 + (startM || 0);
-    const endMinutes = endH * 60 + (endM || 0);
+    const startMinutes = startH * 60 + startM;
+    const endMinutes = endH * 60 + endM;
 
-    if (startMinutes > endMinutes) {
-      // Spans midnight (e.g., 22:00 - 07:00)
-      return currentMinutes >= startMinutes || currentMinutes < endMinutes;
-    } else {
-      // Within same day (e.g., 13:00 - 15:00)
+    if (startMinutes <= endMinutes) {
       return currentMinutes >= startMinutes && currentMinutes < endMinutes;
+    } else {
+      // Overnight quiet hours (e.g. 22:00 to 07:00)
+      return currentMinutes >= startMinutes || currentMinutes < endMinutes;
     }
-  }
-
-  async listNotifications(userId: string, limit = 50) {
-    return prisma.notification.findMany({
-      where: { userId },
-      orderBy: { createdAt: 'desc' },
-      take: limit,
-    });
   }
 
   async markAsRead(userId: string, notificationId: string) {
@@ -207,23 +137,45 @@ export class NotificationService {
     });
   }
 
-  async getPreferences(userId: string) {
-    let prefs = await prisma.notificationPreference.findUnique({
-      where: { userId },
+  async markAllAsRead(userId: string) {
+    return prisma.notification.updateMany({
+      where: { userId, readAt: null },
+      data: { readAt: new Date() },
     });
-    if (!prefs) {
-      prefs = await prisma.notificationPreference.create({
-        data: { userId },
-      });
-    }
-    return prefs;
   }
 
-  async updatePreferences(userId: string, data: any) {
+  async listNotifications(userId: string, limit = 50, cursor?: string) {
+    return prisma.notification.findMany({
+      where: { userId },
+      take: limit,
+      skip: cursor ? 1 : 0,
+      cursor: cursor ? { id: cursor } : undefined,
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async getPreferences(userId: string) {
     return prisma.notificationPreference.upsert({
       where: { userId },
-      create: { userId, ...data },
-      update: data,
+      create: { userId },
+      update: {},
+    });
+  }
+
+  async updatePreferences(
+    userId: string,
+    updates: Partial<{
+      enabled: boolean;
+      quietStart: string;
+      quietEnd: string;
+      showAmounts: boolean;
+      dailyCap: number;
+    }>
+  ) {
+    return prisma.notificationPreference.upsert({
+      where: { userId },
+      create: { userId, ...updates },
+      update: updates,
     });
   }
 }

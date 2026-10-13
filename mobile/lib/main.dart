@@ -8,11 +8,20 @@ import 'data/local/app_database.dart';
 import 'data/remote/api_client_provider.dart';
 import 'data/sms/ingestion_provider.dart';
 import 'data/sync/sync_provider.dart';
+import 'package:workmanager/workmanager.dart';
+import 'core/notifications/notification_service.dart';
+import 'core/notifications/notification_scheduler.dart';
+import 'core/notifications/daily_spending_worker.dart';
 export 'data/sms/sources/sms_transaction_source.dart' show onBackgroundSmsMessage;
 
-void main() {
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   ensureSqlCipherLoaded();
+  await NotificationService.instance.ensureInitialized();
+  try {
+    Workmanager().initialize(callbackDispatcher);
+    await NotificationScheduler.syncSpendingSummarySchedule();
+  } catch (_) {}
   runApp(
     const ProviderScope(
       child: SwBudgetApp(),

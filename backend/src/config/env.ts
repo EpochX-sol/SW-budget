@@ -8,7 +8,6 @@ const envSchema = z.object({
   PORT: z.coerce.number().default(3000),
   HOST: z.string().default('0.0.0.0'),
   DATABASE_URL: z.string().url(),
-  REDIS_URL: z.string().url().default('redis://127.0.0.1:6379'),
   JWT_SECRET: z.string().min(32),
   JWT_REFRESH_SECRET: z.string().min(32),
   JWT_EXPIRES_IN: z.coerce.number().default(900),

@@ -12,6 +12,7 @@ import '../../data/sync/sync_provider.dart';
 
 import '../../data/remote/api_client_provider.dart';
 import '../../core/notifications/local_notification_service.dart';
+import 'notification_settings_screen.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
@@ -149,6 +150,50 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     },
                   ),
                 ],
+              ),
+            ),
+            const SizedBox(height: 18),
+
+            // Totals Notification System Settings
+            const Text(
+              'NOTIFICATIONS & ALERTS',
+              style: TextStyle(
+                color: AppColors.text3,
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 1.1,
+              ),
+            ),
+            const SizedBox(height: 10),
+            Container(
+              decoration: BoxDecoration(
+                color: AppColors.surface,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: AppColors.line),
+              ),
+              child: ListTile(
+                contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+                leading: const Icon(Icons.notifications_active_outlined, color: AppColors.accent, size: 22),
+                title: const Text(
+                  'Notification Settings',
+                  style: TextStyle(
+                    color: AppColors.text,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                subtitle: const Text(
+                  'Transactions, budget warnings, daily & weekly spending summaries',
+                  style: TextStyle(color: AppColors.text3, fontSize: 11),
+                ),
+                trailing: const Icon(Icons.arrow_forward_ios_rounded, color: AppColors.text3, size: 14),
+                onTap: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => const NotificationSettingsScreen(),
+                    ),
+                  );
+                },
               ),
             ),
             const SizedBox(height: 18),
