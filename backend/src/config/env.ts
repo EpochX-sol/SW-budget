@@ -20,11 +20,11 @@ const envSchema = z.object({
   OPENROUTER_MODEL: z.string().default('cohere/north-mini-code:free'),
 });
 
-const parsed = envSchema.safeParse(process.env);
-
-if (!parsed.success) {
-  console.error('❌ Invalid environment variables:', JSON.stringify(parsed.error.format(), null, 2));
-  process.exit(1);
-}
-
-export const env = parsed.data;
+export const env: z.infer<typeof envSchema> = (() => {
+  try {
+    return envSchema.parse(process.env);
+  } catch (err: any) {
+    console.error('❌ Invalid environment variables:', err);
+    process.exit(1);
+  }
+})();
