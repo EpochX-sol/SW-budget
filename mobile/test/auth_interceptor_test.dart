@@ -71,6 +71,14 @@ class MockSecureStorageService implements SecureStorageService {
   @override
   Future<void> clearBackgroundTimestamp() async => backgroundTs = null;
 
+  String? customBaseUrl;
+
+  @override
+  Future<String?> getCustomBaseUrl() async => customBaseUrl;
+
+  @override
+  Future<void> setCustomBaseUrl(String? url) async => customBaseUrl = url;
+
   @override
   Future<void> wipeAll() async => clearAuthTokens();
 }

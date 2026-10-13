@@ -1,18 +1,22 @@
 import { syncRepository, SyncRepository } from './sync.repository.js';
 import { SyncPushInput, SyncPullInput } from './sync.schemas.js';
-import { redisConnection } from '../../jobs/redis.js';
+import { safeRedisGet, safeRedisSetex } from '../../jobs/redis.js';
 import { aggregatesQueue } from '../../jobs/queues.js';
 
 export class SyncService {
   constructor(private repo: SyncRepository = syncRepository) {}
 
   async pushChanges(userId: string, input: SyncPushInput, idempotencyKey?: string) {
-    // 1. Check idempotency in Redis if header provided
+    // 1. Check idempotency in Redis if header provided (fail-safe and non-blocking)
     if (idempotencyKey) {
       const cacheKey = `idempotency:sync:${userId}:${idempotencyKey}`;
-      const cached = await redisConnection.get(cacheKey);
-      if (cached) {
-        return JSON.parse(cached);
+      try {
+        const cached = await safeRedisGet(cacheKey, 1000);
+        if (cached) {
+          return JSON.parse(cached);
+        }
+      } catch {
+        // Fallback: continue to DB if Redis is unreachable
       }
     }
 
@@ -22,21 +26,25 @@ export class SyncService {
       input.changes
     );
 
-    // 3. Dispatch aggregate jobs to BullMQ queue
+    // 3. Dispatch aggregate jobs to BullMQ queue (safe, non-blocking fallback if Redis offline)
     for (const update of aggregateUpdates) {
-      await aggregatesQueue.add(
-        'update-aggregate',
-        {
-          userId,
-          day: update.day,
-          categoryId: update.categoryId,
-          accountId: update.accountId,
-        },
-        {
-          jobId: `agg_${userId}_${update.day}_${update.categoryId}_${update.accountId}`,
-          delay: 500, // Small debounce
-        }
-      );
+      try {
+        await aggregatesQueue.add(
+          'update-aggregate',
+          {
+            userId,
+            day: update.day,
+            categoryId: update.categoryId,
+            accountId: update.accountId,
+          },
+          {
+            jobId: `agg_${userId}_${update.day}_${update.categoryId}_${update.accountId}`,
+            delay: 500, // Small debounce
+          }
+        );
+      } catch {
+        // Redis/BullMQ worker is optional in cloud/dev; aggregate updates proceed gracefully
+      }
     }
 
     const result = {
@@ -45,10 +53,10 @@ export class SyncService {
       new_cursor: Number(newCursor),
     };
 
-    // 4. Cache idempotency result for 24 hours
+    // 4. Cache idempotency result for 24 hours (fail-safe)
     if (idempotencyKey) {
       const cacheKey = `idempotency:sync:${userId}:${idempotencyKey}`;
-      await redisConnection.setex(cacheKey, 86400, JSON.stringify(result));
+      safeRedisSetex(cacheKey, 86400, JSON.stringify(result), 1000).catch(() => {});
     }
 
     return result;

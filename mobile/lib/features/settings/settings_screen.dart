@@ -7,6 +7,7 @@ import '../../core/security/privacy_provider.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/backup/backup_export_service.dart';
 import '../../core/widgets/sheets/export_statement_sheet.dart';
+import '../../core/widgets/sheets/server_config_sheet.dart';
 import '../../data/sync/sync_provider.dart';
 
 import '../../data/remote/api_client_provider.dart';
@@ -22,10 +23,8 @@ class SettingsScreen extends ConsumerStatefulWidget {
 class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   bool _biometricEnabled = true;
   bool _simulateOffline = false;
-  bool _simulateFailedSync = false;
   bool _notificationsEnabled = true;
   bool _showAmountsOnLock = false;
-  bool _quietHoursEnabled = true;
 
   @override
   void initState() {
@@ -107,7 +106,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               child: Column(
                 children: [
                   SwitchListTile(
-                    activeColor: AppColors.accent,
+                    activeThumbColor: AppColors.accent,
                     contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
                     title: const Text(
                       'Biometric App Lock',
@@ -130,7 +129,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   ),
                   const Divider(color: AppColors.line, height: 1),
                   SwitchListTile(
-                    activeColor: AppColors.accent,
+                    activeThumbColor: AppColors.accent,
                     contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
                     title: const Text(
                       'Privacy Eye Mode',
@@ -259,7 +258,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               child: Column(
                 children: [
                   SwitchListTile(
-                    activeColor: AppColors.accent,
+                    activeThumbColor: AppColors.accent,
                     contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
                     title: const Text('Instant Spending Alerts', style: TextStyle(color: AppColors.text, fontSize: 13, fontWeight: FontWeight.w600)),
                     subtitle: const Text('On-device instant alerts when approaching 80% & 100% budget', style: TextStyle(color: AppColors.text3, fontSize: 11)),
@@ -271,7 +270,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   ),
                   const Divider(color: AppColors.line, height: 1),
                   SwitchListTile(
-                    activeColor: AppColors.accent,
+                    activeThumbColor: AppColors.accent,
                     contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
                     title: const Text('Show Amounts in Notifications', style: TextStyle(color: AppColors.text, fontSize: 13, fontWeight: FontWeight.w600)),
                     subtitle: const Text('Display exact ETB balances in push banners', style: TextStyle(color: AppColors.text3, fontSize: 11)),
@@ -376,7 +375,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               child: Column(
                 children: [
                   SwitchListTile(
-                    activeColor: AppColors.amber,
+                    activeThumbColor: AppColors.amber,
                     contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
                     title: const Text('Simulate Offline Mode', style: TextStyle(color: AppColors.text, fontSize: 13)),
                     value: _simulateOffline,
@@ -387,16 +386,18 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     },
                   ),
                   const Divider(color: AppColors.line, height: 1),
-                  SwitchListTile(
-                    activeColor: AppColors.expense,
+                  ListTile(
                     contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
-                    title: const Text('Simulate Sync Network Error', style: TextStyle(color: AppColors.text, fontSize: 13)),
-                    value: _simulateFailedSync,
-                    onChanged: (val) {
-                      setState(() {
-                        _simulateFailedSync = val;
-                      });
-                    },
+                    leading: const Icon(Icons.dns_rounded, color: AppColors.accent, size: 20),
+                    title: const Text('Backend Server Endpoint', style: TextStyle(color: AppColors.text, fontSize: 13, fontWeight: FontWeight.w600)),
+                    subtitle: Text(
+                      ref.watch(serverConfigProvider),
+                      style: const TextStyle(color: AppColors.text3, fontSize: 11),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    trailing: const Icon(Icons.arrow_forward_ios_rounded, color: AppColors.text3, size: 12),
+                    onTap: () => ServerConfigSheet.show(context),
                   ),
                 ],
               ),
@@ -409,7 +410,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               child: OutlinedButton(
                 style: OutlinedButton.styleFrom(
                   foregroundColor: AppColors.expense,
-                  side: BorderSide(color: AppColors.expense.withOpacity(0.4)),
+                  side: BorderSide(color: AppColors.expense.withValues(alpha: 0.4)),
                   backgroundColor: AppColors.surface,
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                   padding: const EdgeInsets.symmetric(vertical: 12),

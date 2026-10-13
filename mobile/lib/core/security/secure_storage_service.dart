@@ -30,6 +30,7 @@ class SecureStorageService {
   static const String _keyBiometricsEnabled = 'sw_budget_biometrics_enabled';
   static const String _keyLockTimeoutSeconds = 'sw_budget_lock_timeout_sec';
   static const String _keyLastBackgroundTs = 'sw_budget_last_background_ts';
+  static const String _keyCustomBaseUrl = 'sw_budget_custom_base_url';
 
   /// Retrieves or generates a 256-bit cryptographically secure passphrase
   /// for the local SQLCipher database.
@@ -135,6 +136,18 @@ class SecureStorageService {
 
   Future<void> clearBackgroundTimestamp() async {
     await _storage.delete(key: _keyLastBackgroundTs);
+  }
+
+  Future<String?> getCustomBaseUrl() async {
+    return _storage.read(key: _keyCustomBaseUrl);
+  }
+
+  Future<void> setCustomBaseUrl(String? url) async {
+    if (url == null || url.trim().isEmpty) {
+      await _storage.delete(key: _keyCustomBaseUrl);
+    } else {
+      await _storage.write(key: _keyCustomBaseUrl, value: url.trim());
+    }
   }
 
   /// Full purge for account deletion or reset

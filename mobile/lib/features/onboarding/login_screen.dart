@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import '../../core/security/auth_state.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_typography.dart';
+import '../../core/widgets/sheets/server_config_sheet.dart';
 import '../../data/remote/api_client_provider.dart';
 import '../../data/remote/api_exception.dart';
 
@@ -23,6 +24,14 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   bool _enableBiometrics = true;
   bool _isLoading = false;
   String? _errorMessage;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      ref.read(apiClientProvider).prewarmServer();
+    });
+  }
 
   @override
   void dispose() {
@@ -92,6 +101,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
           icon: const Icon(Icons.arrow_back_ios_new_rounded, color: AppColors.textPrimary),
           onPressed: () => context.pop(),
         ),
+        actions: [
+          IconButton(
+            tooltip: 'Server Settings',
+            icon: const Icon(Icons.dns_rounded, color: AppColors.accent, size: 20),
+            onPressed: () => ServerConfigSheet.show(context),
+          ),
+        ],
       ),
       body: SafeArea(
         child: SingleChildScrollView(
@@ -114,7 +130,41 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     color: AppColors.textSecondary,
                   ),
                 ),
-                const SizedBox(height: 28),
+                const SizedBox(height: 12),
+
+                // Server Status & Switcher Chip
+                InkWell(
+                  onTap: () => ServerConfigSheet.show(context),
+                  borderRadius: BorderRadius.circular(10),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: AppColors.surface2,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: AppColors.line),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.cloud_outlined, color: AppColors.accent, size: 14),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Server: ${ref.watch(serverConfigProvider)}',
+                            style: const TextStyle(
+                              color: AppColors.text3,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w500,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        const Icon(Icons.tune_rounded, color: AppColors.text3, size: 13),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 20),
 
                 // Error Banner
                 if (_errorMessage != null) ...[
@@ -123,7 +173,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     decoration: BoxDecoration(
                       color: AppColors.expenseSurface,
                       borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: AppColors.expense.withOpacity(0.5)),
+                      border: Border.all(color: AppColors.expense.withValues(alpha: 0.5)),
                     ),
                     child: Row(
                       children: [
@@ -233,7 +283,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,
                   value: _enableBiometrics,
-                  activeColor: AppColors.primaryLight,
+                  activeThumbColor: AppColors.primaryLight,
                   onChanged: (val) => setState(() => _enableBiometrics = val),
                   title: Text(
                     'Enable Biometric Quick Unlock',

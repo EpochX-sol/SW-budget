@@ -1,4 +1,3 @@
-import 'dart:io';
 import 'package:dio/dio.dart';
 import '../../core/security/secure_storage_service.dart';
 import 'api_endpoints.dart';
@@ -19,8 +18,9 @@ class ApiClient {
         baseUrl = customBaseUrl ?? ApiEndpoints.defaultBaseUrl,
         _dio = Dio(BaseOptions(
           baseUrl: customBaseUrl ?? ApiEndpoints.defaultBaseUrl,
-          connectTimeout: const Duration(seconds: 15),
-          receiveTimeout: const Duration(seconds: 20),
+          connectTimeout: const Duration(seconds: 40),
+          receiveTimeout: const Duration(seconds: 60),
+          sendTimeout: const Duration(seconds: 40),
           headers: {
             'Content-Type': 'application/json',
             'Accept': 'application/json',
@@ -34,6 +34,60 @@ class ApiClient {
         onSessionExpired: onSessionExpired,
       ),
     );
+  }
+
+  /// Silently wakes up the backend server (e.g. Render free tier cold start) in the background
+  Future<void> prewarmServer() async {
+    try {
+      final probeDio = Dio(BaseOptions(
+        baseUrl: baseUrl,
+        connectTimeout: const Duration(seconds: 35),
+        receiveTimeout: const Duration(seconds: 35),
+      ));
+      await probeDio.get(ApiEndpoints.health);
+    } catch (_) {
+      // Ignored: Probe's only purpose is to trigger network handshake & container boot
+    }
+  }
+
+  /// Tests latency and reachability of any given server URL
+  static Future<Map<String, dynamic>> testServerConnection(String targetUrl) async {
+    final cleanUrl = targetUrl.trim().replaceAll(RegExp(r'/+$'), '');
+    final stopwatch = Stopwatch()..start();
+    try {
+      final probeDio = Dio(BaseOptions(
+        baseUrl: cleanUrl,
+        connectTimeout: const Duration(seconds: 15),
+        receiveTimeout: const Duration(seconds: 15),
+      ));
+      final res = await probeDio.get(ApiEndpoints.health);
+      stopwatch.stop();
+      final isOk = res.statusCode == 200 || res.statusCode == 503;
+      return {
+        'success': isOk,
+        'latency_ms': stopwatch.elapsedMilliseconds,
+        'status': res.data is Map ? (res.data['status'] ?? 'ok') : 'ok',
+        'error': null,
+      };
+    } on DioException catch (e) {
+      stopwatch.stop();
+      return {
+        'success': false,
+        'latency_ms': stopwatch.elapsedMilliseconds,
+        'status': 'unreachable',
+        'error': e.type == DioExceptionType.connectionTimeout
+            ? 'Connection timed out'
+            : (e.message ?? 'Cannot connect to server'),
+      };
+    } catch (e) {
+      stopwatch.stop();
+      return {
+        'success': false,
+        'latency_ms': stopwatch.elapsedMilliseconds,
+        'status': 'error',
+        'error': e.toString(),
+      };
+    }
   }
 
   // --- AUTHENTICATION ---

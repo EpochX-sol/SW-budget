@@ -5,6 +5,7 @@ import 'core/router/app_router.dart';
 import 'core/security/auth_state.dart';
 import 'core/theme/app_theme.dart';
 import 'data/local/app_database.dart';
+import 'data/remote/api_client_provider.dart';
 import 'data/sms/ingestion_provider.dart';
 import 'data/sync/sync_provider.dart';
 export 'data/sms/sources/sms_transaction_source.dart' show onBackgroundSmsMessage;
@@ -32,7 +33,8 @@ class _SwBudgetAppState extends ConsumerState<SwBudgetApp> with WidgetsBindingOb
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      ref.read(syncStateProvider.notifier).triggerSync().catchError((_) {});
+      ref.read(apiClientProvider).prewarmServer();
+      ref.read(syncStateProvider.notifier).triggerSync().ignore();
     });
   }
 
@@ -52,8 +54,9 @@ class _SwBudgetAppState extends ConsumerState<SwBudgetApp> with WidgetsBindingOb
       // Phase 3: Execute foreground catch-up scan for any financial SMS arrived while asleep
       ref.read(backgroundSyncCoordinatorProvider.future).then((coordinator) {
         coordinator.executeForegroundCatchUp();
-      }).catchError((_) {});
-      ref.read(syncStateProvider.notifier).triggerSync().catchError((_) {});
+      }).ignore();
+      ref.read(apiClientProvider).prewarmServer();
+      ref.read(syncStateProvider.notifier).triggerSync().ignore();
     }
   }
 

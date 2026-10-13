@@ -1,6 +1,6 @@
 import { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import { prisma } from '../../db/prisma.js';
-import { redisConnection } from '../../jobs/redis.js';
+import { pingRedisWithTimeout } from '../../jobs/redis.js';
 
 export const healthRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
   fastify.get('/health', async (_request, reply) => {
@@ -24,18 +24,18 @@ export const healthRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
     }
 
     try {
-      const pong = await redisConnection.ping();
-      if (pong === 'PONG') {
+      const isRedisUp = await pingRedisWithTimeout(1200);
+      if (isRedisUp) {
         redisStatus = 'up';
       }
     } catch (error) {
       fastify.log.error(error, 'Health check Redis ping failed');
     }
 
-    const isHealthy = dbStatus === 'up' && redisStatus === 'up';
+    const isCoreHealthy = dbStatus === 'up';
 
-    return reply.status(isHealthy ? 200 : 503).send({
-      status: isHealthy ? 'ok' : 'degraded',
+    return reply.status(isCoreHealthy ? 200 : 503).send({
+      status: isCoreHealthy ? (redisStatus === 'up' ? 'ok' : 'degraded') : 'down',
       timestamp: new Date().toISOString(),
       uptime: process.uptime(),
       services: {

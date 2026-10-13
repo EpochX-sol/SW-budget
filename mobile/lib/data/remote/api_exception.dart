@@ -40,7 +40,7 @@ class ApiException implements Exception {
       return ApiException(
         title: 'Connection Timeout',
         status: 408,
-        detail: 'The request took too long to complete. Please check your network connection.',
+        detail: 'The request took too long to complete. The cloud server may be waking up from sleep. Please try again.',
         rawData: e.error,
       );
     }
@@ -49,7 +49,7 @@ class ApiException implements Exception {
       return ApiException(
         title: 'Network Error',
         status: 503,
-        detail: 'Cannot reach the SW-budget server. Please ensure the backend is running.',
+        detail: 'Cannot reach the SW-budget server. Please verify your internet connection or server URL in Settings.',
         rawData: e.error,
       );
     }

@@ -89,17 +89,9 @@ class AuthInterceptor extends QueuedInterceptor {
         // Call refresh using an isolated raw Dio client to bypass interceptors
         final refreshDio = Dio(BaseOptions(
           baseUrl: _baseUrl,
-          connectTimeout: const Duration(seconds: 10),
-          receiveTimeout: const Duration(seconds: 10),
+          connectTimeout: const Duration(seconds: 30),
+          receiveTimeout: const Duration(seconds: 30),
         ));
-
-        final refreshRes = await refreshDio.post(
-          ApiEndpoints.refresh,
-          data: {
-            'refresh_token': refreshToken,
-            'device_id': deviceId,
-          },
-        );
 
         bool refreshSucceeded = false;
         String? newAccessToken;
