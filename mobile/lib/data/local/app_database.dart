@@ -283,6 +283,20 @@ class AppDatabase {
         deleted_at TEXT
       );
 
+      CREATE TABLE IF NOT EXISTS local_reimbursements (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        amount REAL NOT NULL,
+        paid_amount REAL NOT NULL DEFAULT 0.0,
+        status TEXT NOT NULL DEFAULT 'pending',
+        note TEXT,
+        change_seq INTEGER NOT NULL DEFAULT 0,
+        is_dirty INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL,
+        updated_at TEXT,
+        deleted_at TEXT
+      );
+
       CREATE TABLE IF NOT EXISTS local_budget_plans (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
@@ -335,9 +349,32 @@ class AppDatabase {
 
       CREATE INDEX IF NOT EXISTS idx_plan_active ON local_budget_plans(status);
       CREATE INDEX IF NOT EXISTS idx_expected_plan ON local_expected_expenses(plan_id);
+      CREATE INDEX IF NOT EXISTS idx_debts_dirty ON local_debts(is_dirty);
+      CREATE INDEX IF NOT EXISTS idx_reimbursements_dirty ON local_reimbursements(is_dirty);
+      CREATE INDEX IF NOT EXISTS idx_reimbursements_status ON local_reimbursements(status);
     ''');
 
     // Migration safe guards for existing local db instances
+    try {
+      _db.execute('''
+        CREATE TABLE IF NOT EXISTS local_reimbursements (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          amount REAL NOT NULL,
+          paid_amount REAL NOT NULL DEFAULT 0.0,
+          status TEXT NOT NULL DEFAULT 'pending',
+          note TEXT,
+          change_seq INTEGER NOT NULL DEFAULT 0,
+          is_dirty INTEGER NOT NULL DEFAULT 1,
+          created_at TEXT NOT NULL,
+          updated_at TEXT,
+          deleted_at TEXT
+        );
+      ''');
+    } catch (_) {}
+    try { _db.execute('CREATE INDEX IF NOT EXISTS idx_reimbursements_dirty ON local_reimbursements(is_dirty);'); } catch (_) {}
+    try { _db.execute('CREATE INDEX IF NOT EXISTS idx_reimbursements_status ON local_reimbursements(status);'); } catch (_) {}
+    try { _db.execute('CREATE INDEX IF NOT EXISTS idx_debts_dirty ON local_debts(is_dirty);'); } catch (_) {}
     try { _db.execute('ALTER TABLE local_debts ADD COLUMN change_seq INTEGER NOT NULL DEFAULT 0;'); } catch (_) {}
     try { _db.execute('ALTER TABLE local_debts ADD COLUMN is_dirty INTEGER NOT NULL DEFAULT 1;'); } catch (_) {}
     try { _db.execute('ALTER TABLE local_reimbursements ADD COLUMN change_seq INTEGER NOT NULL DEFAULT 0;'); } catch (_) {}
