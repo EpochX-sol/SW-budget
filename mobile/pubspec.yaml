@@ -1,5 +1,5 @@
 name: sw_budget
-description: "SW-budget: Personal finance and AI budgeting app for Ethiopia"
+description: "HuluBirr: Personal finance and AI budgeting app for Ethiopia"
 publish_to: "none"
 version: 1.0.0+1
 
@@ -71,9 +71,12 @@ dev_dependencies:
   json_serializable: ^6.9.4
   riverpod_generator: ^2.6.4
   mocktail: ^1.0.4
+  flutter_launcher_icons: ^0.14.4
 
 flutter:
   uses-material-design: true
 
   assets:
     - assets/templates/
+    - assets/hulubirr-gray.png
+    - assets/hulubirr-gray.svg

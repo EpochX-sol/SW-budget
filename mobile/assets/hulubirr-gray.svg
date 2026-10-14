@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">HuluBirr — gray background logo</title>
+  <desc id="desc">A golden wallet with green banknotes on a slate-gray gradient background, with the HuluBirr wordmark and Amharic name.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#B9BEC6"/>
+      <stop offset="0.48" stop-color="#858D98"/>
+      <stop offset="1" stop-color="#626B77"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="0.9" y2="1">
+      <stop offset="0" stop-color="#FFF18A"/>
+      <stop offset="0.48" stop-color="#FFD94A"/>
+      <stop offset="1" stop-color="#F6A900"/>
+    </linearGradient>
+    <linearGradient id="green1" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#9BFF9D"/><stop offset="1" stop-color="#10A86A"/>
+    </linearGradient>
+    <linearGradient id="green2" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#35D99A"/><stop offset="1" stop-color="#006D50"/>
+    </linearGradient>
+    <linearGradient id="charcoal" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#40576B"/><stop offset="1" stop-color="#182B3B"/>
+    </linearGradient>
+    <filter id="shadow" x="-25%" y="-25%" width="150%" height="160%">
+      <feDropShadow dx="0" dy="14" stdDeviation="14" flood-color="#17202B" flood-opacity="0.25"/>
+    </filter>
+    <filter id="softShadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="6" stdDeviation="6" flood-color="#26313B" flood-opacity="0.20"/>
+    </filter>
+  </defs>
+  <rect width="1024" height="1024" rx="180" fill="url(#bg)"/>
+  <g filter="url(#shadow)">
+    <!-- layered notes -->
+    <path d="M292 310 Q310 260 369 237 L583 151 Q620 136 640 169 L690 252 L692 325 Z" fill="url(#green1)"/>
+    <path d="M292 310 Q310 260 369 237 L583 151 Q620 136 640 169 L650 190 L379 288 Q331 304 306 340 Z" fill="#B0FFB0" opacity="0.62"/>
+    <path d="M293 333 Q320 285 375 266 L616 190 Q648 180 664 211 L704 282 L704 342 Z" fill="url(#green2)"/>
+    <path d="M309 336 L615 239 Q641 231 654 255 L668 285 L353 371 Z" fill="#075A49" opacity="0.9"/>
+    <!-- wallet body -->
+    <path d="M286 350 Q286 306 333 306 H680 Q735 306 746 355 L746 507 Q746 582 671 594 L365 594 Q286 594 286 516 Z" fill="url(#gold)"/>
+    <path d="M302 349 Q302 322 336 322 H681 Q713 322 727 348" fill="none" stroke="#FFF8C8" stroke-width="10" stroke-linecap="round" opacity="0.75"/>
+    <!-- ascending bars -->
+    <path d="M352 547 V501 Q352 486 367 477 L386 466 Q400 459 400 478 V553 Q376 553 352 547Z" fill="#233849"/>
+    <path d="M425 555 V447 Q425 432 440 423 L461 411 Q475 404 475 423 V557 Z" fill="#233849"/>
+    <path d="M499 556 V400 Q499 385 514 377 L536 365 Q550 358 550 377 V555 Z" fill="#233849"/>
+    <!-- wallet clasp -->
+    <path d="M590 398 Q590 363 626 363 H738 Q765 363 765 391 V452 Q765 477 740 477 H626 Q590 477 590 442 Z" fill="url(#charcoal)"/>
+    <path d="M604 397 Q604 378 628 378 H738" fill="none" stroke="#758B9C" stroke-width="6" stroke-linecap="round" opacity="0.75"/>
+    <circle cx="654" cy="420" r="29" fill="url(#gold)" stroke="#FFF2A4" stroke-width="5"/>
+  </g>
+  <!-- wordmark -->
+  <g font-family="Arial, 'Noto Sans', sans-serif" font-weight="800" text-anchor="middle" filter="url(#softShadow)">
+    <text x="512" y="772" font-size="132" letter-spacing="-5"><tspan fill="#FFFDF5">Hulu</tspan><tspan fill="#FFD03D">Birr</tspan></text>
+  </g>
+  <g fill="#FFD03D" stroke="#FFD03D" stroke-width="1">
+    <rect x="230" y="837" width="103" height="12" rx="6"/>
+    <rect x="691" y="837" width="103" height="12" rx="6"/>
+  </g>
+  <text x="512" y="875" font-family="'Noto Sans Ethiopic', 'Abyssinica SIL', sans-serif" font-size="58" font-weight="700" text-anchor="middle" fill="#FFD03D">ሁሉብር</text>
+</svg>

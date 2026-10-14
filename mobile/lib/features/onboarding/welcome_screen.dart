@@ -50,7 +50,7 @@ class WelcomeScreen extends StatelessWidget {
 
               // Title & Subtitle
               Text(
-                'SW-budget',
+                'HuluBirr',
                 textAlign: TextAlign.center,
                 style: AppTypography.displayLarge.copyWith(
                   fontWeight: FontWeight.w800,

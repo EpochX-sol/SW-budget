@@ -77,7 +77,7 @@ class _SwBudgetAppState extends ConsumerState<SwBudgetApp> with WidgetsBindingOb
     final router = ref.watch(appRouterProvider);
 
     return MaterialApp.router(
-      title: 'SW-budget',
+      title: 'HuluBirr',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.darkTheme,
       darkTheme: AppTheme.darkTheme,

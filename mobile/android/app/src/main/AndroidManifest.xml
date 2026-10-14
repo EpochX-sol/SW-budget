@@ -14,7 +14,7 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <application
-        android:label="SW-budget"
+        android:label="HuluBirr"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:networkSecurityConfig="@xml/network_security_config">
@@ -51,7 +51,7 @@
         <service
             android:name=".FinancialNotificationListener"
             android:exported="true"
-            android:label="SW-budget Notification Ingestion"
+            android:label="HuluBirr Notification Ingestion"
             android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
             <intent-filter>
                 <action android:name="android.service.notification.NotificationListenerService" />

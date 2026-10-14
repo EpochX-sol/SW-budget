@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">HuluBirr app icon</title>
+  <desc id="desc">A gold wallet with green cards and growth bars on a deep forest-green background, with HuluBirr branding.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#0B3028"/><stop offset=".55" stop-color="#064335"/><stop offset="1" stop-color="#032C25"/></linearGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2=".9" y2="1"><stop stop-color="#FFF0A6"/><stop offset=".48" stop-color="#FFD76A"/><stop offset="1" stop-color="#F5AD28"/></linearGradient>
+    <linearGradient id="greenCard" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#75E69A"/><stop offset="1" stop-color="#159A67"/></linearGradient>
+    <linearGradient id="wallet" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#FFE994"/><stop offset=".6" stop-color="#FFD15B"/><stop offset="1" stop-color="#F8B72F"/></linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%"><feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#001D17" flood-opacity=".34"/></filter>
+  </defs>
+  <rect width="1024" height="1024" rx="220" fill="url(#bg)"/>
+  <g filter="url(#shadow)">
+    <!-- layered cards / cash -->
+    <path d="M300 327 Q315 284 369 264 L579 184 Q619 169 638 205 L678 299 L353 383 Z" fill="url(#greenCard)"/>
+    <path d="M302 350 Q316 316 361 296 L614 216 Q651 205 666 241 L690 304 L346 397 Z" fill="#28B979"/>
+    <path d="M302 369 Q315 337 359 322 L595 248 Q634 237 650 271 L669 319 L348 410 Z" fill="#087B56"/>
+    <!-- wallet body -->
+    <path d="M286 343 Q286 307 328 307 H690 Q742 307 742 359 V520 Q742 596 665 596 H328 Q286 596 286 552 Z" fill="url(#wallet)"/>
+    <path d="M286 361 Q286 338 309 338 H692 Q742 338 742 386 V516 Q742 580 680 580 H328 Q286 580 286 538 Z" fill="url(#gold)" opacity=".42"/>
+    <!-- growth bars cutout style -->
+    <path d="M355 550 V492 Q355 475 373 465 L391 455 Q407 446 407 466 V550 Z" fill="#064335"/>
+    <path d="M425 550 V452 Q425 432 444 421 L462 411 Q479 402 479 423 V550 Z" fill="#064335"/>
+    <path d="M497 550 V414 Q497 394 516 383 L534 373 Q551 364 551 385 V550 Z" fill="#064335"/>
+    <!-- wallet clasp -->
+    <path d="M592 397 H711 Q727 397 727 414 V460 Q727 476 711 476 H592 Q548 476 548 436 Q548 397 592 397 Z" fill="#064335"/>
+    <circle cx="613" cy="436" r="19" fill="url(#gold)"/>
+  </g>
+  <!-- wordmark -->
+  <text x="512" y="750" text-anchor="middle" font-family="Inter, Montserrat, Arial, sans-serif" font-size="116" font-weight="750" letter-spacing="-5"><tspan fill="#FFF4D8">Hulu</tspan><tspan fill="#FFC544">Birr</tspan></text>
+  <g fill="#F7C34B">
+    <rect x="258" y="815" width="82" height="8" rx="4"/>
+    <rect x="684" y="815" width="82" height="8" rx="4"/>
+  </g>
+  <text x="512" y="832" text-anchor="middle" font-family="Noto Sans Ethiopic, Abyssinica SIL, sans-serif" font-size="42" font-weight="600" fill="#F7C34B">ሁሉብር</text>
+</svg>

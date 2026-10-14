@@ -1,0 +1,7 @@
+flutter_launcher_icons:
+  android: true
+  ios: false
+  image_path: "assets/hulubirr-gray.png"
+  min_sdk_android: 21
+  adaptive_icon_background: "#858D98"
+  adaptive_icon_foreground: "assets/hulubirr-gray.png"

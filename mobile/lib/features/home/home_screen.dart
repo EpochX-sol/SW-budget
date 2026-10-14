@@ -739,7 +739,7 @@ class HomeScreen extends ConsumerWidget {
       if (safeToday > 0) {
         insightText = 'Your spending pace is healthy and within your planned daily allowance of ${formatCurrency(safeToday, isPrivate: isPrivate)}. Keep tracking consistent!';
       } else {
-        insightText = 'Welcome to SW Budget! Set up your monthly target in the Plan tab to unlock dynamic daily pacing recommendations.';
+        insightText = 'Welcome to HuluBirr! Set up your monthly target in the Plan tab to unlock dynamic daily pacing recommendations.';
       }
     }
 

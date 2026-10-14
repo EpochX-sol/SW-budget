@@ -319,7 +319,7 @@ class NotificationService {
       final kind = isCredit ? 'Money In' : 'Money Out';
       final bankLabel = (bankName != null && bankName.trim().isNotEmpty)
           ? bankName.trim()
-          : 'SW Budget';
+          : 'HuluBirr';
       final title = '$bankLabel • $kind';
 
       final sign = isCredit ? '+' : '-';
