@@ -83,13 +83,21 @@ class AiChatNotifier extends StateNotifier<ChatState> {
   Future<void> initialize() async {
     try {
       final threads = await _apiClient.getAiThreads();
+      String threadId;
       if (threads.isNotEmpty) {
         final firstThread = threads.first as Map<String, dynamic>;
-        state = state.copyWith(activeThreadId: firstThread['id'] as String);
+        threadId = firstThread['id'] as String;
       } else {
         final newThread = await _apiClient.createAiThread(title: 'Financial Coach');
-        state = state.copyWith(activeThreadId: newThread['id'] as String);
+        threadId = newThread['id'] as String;
       }
+
+      // Fetch and populate thread message history
+      final history = await _apiClient.getAiThreadMessages(threadId);
+      state = state.copyWith(
+        activeThreadId: threadId,
+        messages: history,
+      );
     } catch (_) {
       // Fallback thread id
       state = state.copyWith(activeThreadId: 'local_fallback_thread');

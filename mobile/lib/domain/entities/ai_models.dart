@@ -21,6 +21,20 @@ class AiMessage {
   bool get isUser => role == 'user';
   bool get isAssistant => role == 'assistant';
 
+  factory AiMessage.fromMap(Map<String, dynamic> map) {
+    return AiMessage(
+      id: map['id'] as String? ?? '',
+      threadId: map['threadId'] as String? ?? map['thread_id'] as String? ?? '',
+      role: map['role'] as String? ?? 'user',
+      content: map['content'] as String? ?? '',
+      createdAt: map['createdAt'] != null
+          ? DateTime.tryParse(map['createdAt'] as String) ?? DateTime.now()
+          : map['created_at'] != null
+              ? DateTime.tryParse(map['created_at'] as String) ?? DateTime.now()
+              : DateTime.now(),
+    );
+  }
+
   AiMessage copyWith({
     String? content,
     AiProposal? proposal,

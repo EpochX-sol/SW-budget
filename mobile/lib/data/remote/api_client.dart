@@ -3,6 +3,7 @@ import '../../core/security/secure_storage_service.dart';
 import 'api_endpoints.dart';
 import 'api_exception.dart';
 import 'auth_interceptor.dart';
+import '../../domain/entities/ai_models.dart';
 
 /// Type-safe HTTP Client wrapping Dio to interface with the Fastify backend
 class ApiClient {
@@ -426,6 +427,19 @@ class ApiClient {
     try {
       final response = await _dio.get(ApiEndpoints.aiThreads);
       return response.data as List<dynamic>;
+    } on DioException catch (e) {
+      throw ApiException.fromDioException(e);
+    }
+  }
+
+  Future<List<AiMessage>> getAiThreadMessages(String threadId) async {
+    try {
+      final response = await _dio.get(ApiEndpoints.aiThreadMessages(threadId));
+      final list = response.data as List<dynamic>;
+      return list
+          .map((m) => AiMessage.fromMap(m as Map<String, dynamic>))
+          .where((m) => m.content.trim().isNotEmpty)
+          .toList();
     } on DioException catch (e) {
       throw ApiException.fromDioException(e);
     }
