@@ -36,7 +36,7 @@ class BiometricAuthService {
 
   /// Prompt user for biometric authentication
   Future<bool> authenticate({
-    String reason = 'Authenticate to access your SW-budget ledger',
+    String reason = 'Authenticate to access your HuluBirr financial ledger',
   }) async {
     try {
       final isSupported = await isHardwareSupported();
