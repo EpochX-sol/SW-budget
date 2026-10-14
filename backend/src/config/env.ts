@@ -17,7 +17,7 @@ const envSchema = z.object({
   GEMINI_API_KEY: z.string().optional(),
   OPENROUTER_API_KEY: z.string().optional(),
   OPENROUTER_BASE_URL: z.string().default('https://openrouter.ai/api/v1'),
-  OPENROUTER_MODEL: z.string().default('cohere/north-mini-code:free'),
+  OPENROUTER_MODEL: z.string().default('nvidia/nemotron-3.5-lightning:free'),
 });
 
 export const env: z.infer<typeof envSchema> = (() => {

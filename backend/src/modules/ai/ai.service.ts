@@ -176,141 +176,173 @@ export class AiService {
       );
 
       if (useOpenRouter) {
-        try {
-          const previousMessages = await prisma.aiMessage.findMany({
-            where: { threadId: normalizedThreadId, id: { not: userMsg.id } },
-            orderBy: { createdAt: 'desc' },
-            take: 10,
-          });
-          previousMessages.reverse();
+        const previousMessages = await prisma.aiMessage.findMany({
+          where: { threadId: normalizedThreadId, id: { not: userMsg.id } },
+          orderBy: { createdAt: 'desc' },
+          take: 10,
+        });
+        previousMessages.reverse();
 
-          // Build conversation history with tool-call context so the model
-          // understands what data was already fetched and what answers were given.
-          const historyMessages: any[] = [];
-          for (const m of previousMessages) {
-            if (m.role === 'user') {
-              historyMessages.push({ role: 'user', content: m.content });
-            } else {
-              // For assistant messages, include a summary of tool calls so the
-              // model knows what data was already retrieved.
-              let enrichedContent = m.content || '';
-              if (m.toolCalls && Array.isArray(m.toolCalls) && (m.toolCalls as any[]).length > 0) {
-                const toolSummary = (m.toolCalls as any[]).map((tc: any) => {
-                  const toolName = tc.tool || 'unknown';
-                  const resultPreview = tc.result ? JSON.stringify(tc.result).slice(0, 300) : 'no result';
-                  return `[Tool: ${toolName} → ${resultPreview}]`;
-                }).join('\n');
-                enrichedContent = `${enrichedContent}\n\n<tool_context>\n${toolSummary}\n</tool_context>`;
-              }
-              historyMessages.push({ role: 'assistant', content: enrichedContent });
-            }
+        // Build clean conversation history so model understands context
+        const historyMessages: any[] = [];
+        for (const m of previousMessages) {
+          if (m.role === 'user') {
+            historyMessages.push({ role: 'user', content: m.content });
+          } else {
+            // Keep assistant response clean
+            historyMessages.push({ role: 'assistant', content: m.content || '' });
           }
+        }
 
-          const messages: any[] = [
-            { role: 'system', content: this.buildSystemPrompt(relevantMemories) },
-            ...historyMessages,
-            { role: 'user', content: userContent },
-          ];
+        const candidateModels = Array.from(
+          new Set([
+            env.OPENROUTER_MODEL,
+            'nvidia/nemotron-3.5-lightning:free',
+            'cohere/north-mini-code:free',
+          ])
+        ).filter(Boolean);
 
-          const openRouterUrl = `${env.OPENROUTER_BASE_URL.replace(/\/+$/, '')}/chat/completions`;
-          let turn = 0;
-          const maxTurns = 3;
+        const openRouterUrl = `${env.OPENROUTER_BASE_URL.replace(/\/+$/, '')}/chat/completions`;
+        let openRouterSucceeded = false;
 
-          while (turn < maxTurns) {
-            turn++;
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 35000);
+        for (const modelToTry of candidateModels) {
+          if (openRouterSucceeded) break;
 
-            const openRouterRes = await fetch(openRouterUrl, {
-              method: 'POST',
-              signal: controller.signal,
-              headers: {
-                'Authorization': `Bearer ${env.OPENROUTER_API_KEY}`,
-                'Content-Type': 'application/json',
-                'HTTP-Referer': 'https://sw-budget.local',
-                'X-Title': 'SW-Budget AI Coach',
-              },
-              body: JSON.stringify({
-                model: env.OPENROUTER_MODEL,
+          try {
+            console.log(`[AI] Attempting conversation with model: ${modelToTry}`);
+            const messages: any[] = [
+              { role: 'system', content: this.buildSystemPrompt(relevantMemories) },
+              ...historyMessages,
+              { role: 'user', content: userContent },
+            ];
+
+            let turn = 0;
+            const maxTurns = 5;
+
+            while (turn < maxTurns) {
+              turn++;
+              const controller = new AbortController();
+              const timeoutId = setTimeout(() => controller.abort(), 35000);
+
+              // Allow tools on earlier turns; once multiple tools are executed or turn >= 4, force synthesis
+              const shouldPassTools = turn <= 3 && toolCallsExecuted.length < 4;
+
+              const reqBody: any = {
+                model: modelToTry,
                 messages,
-                tools: OPENAI_TOOL_DECLARATIONS,
-                tool_choice: 'auto',
-                temperature: 0.2,
-              }),
-            }).finally(() => clearTimeout(timeoutId));
-
-            if (!openRouterRes.ok) {
-              const errText = await openRouterRes.text();
-              throw new Error(`OpenRouter returned HTTP ${openRouterRes.status}: ${errText}`);
-            }
-
-            const completion = (await openRouterRes.json()) as any;
-            const choice = completion.choices?.[0];
-            const choiceMsg = choice?.message;
-
-            if (choiceMsg?.tool_calls && choiceMsg.tool_calls.length > 0) {
-              messages.push(choiceMsg);
-
-              for (const call of choiceMsg.tool_calls) {
-                const toolName = call.function.name;
-                let toolArgs: any = {};
-                try {
-                  toolArgs = JSON.parse(call.function.arguments || '{}');
-                } catch (_) {}
-
-                sendSse('tool_start', { tool: toolName, arguments: toolArgs });
-                const toolResult = await this.executeTool(userId, toolName, toolArgs);
-                sendSse('tool_end', { tool: toolName, result: toolResult });
-                toolCallsExecuted.push({ tool: toolName, args: toolArgs, result: toolResult });
-
-                messages.push({
-                  role: 'tool',
-                  tool_call_id: call.id,
-                  name: toolName,
-                  content: JSON.stringify(toolResult),
-                });
+                temperature: 0.25,
+              };
+              if (shouldPassTools) {
+                reqBody.tools = OPENAI_TOOL_DECLARATIONS;
+                reqBody.tool_choice = 'auto';
               }
 
-              // Continue next turn to allow multi-step tool calls or synthesis
-              continue;
-            } else if (choiceMsg?.content && choiceMsg.content.trim()) {
-              assistantText = choiceMsg.content;
-              const parts = assistantText.match(/.{1,60}(\s|$)/g) || [assistantText];
-              for (const part of parts) {
-                sendSse('delta', { text: part, content: part, type: 'token' });
+              const openRouterRes = await fetch(openRouterUrl, {
+                method: 'POST',
+                signal: controller.signal,
+                headers: {
+                  'Authorization': `Bearer ${env.OPENROUTER_API_KEY}`,
+                  'Content-Type': 'application/json',
+                  'HTTP-Referer': 'https://sw-budget.local',
+                  'X-Title': 'SW-Budget AI Coach',
+                },
+                body: JSON.stringify(reqBody),
+              }).finally(() => clearTimeout(timeoutId));
+
+              if (!openRouterRes.ok) {
+                const errText = await openRouterRes.text();
+                throw new Error(`OpenRouter (${modelToTry}) HTTP ${openRouterRes.status}: ${errText}`);
               }
-              tokensUsed = completion.usage?.total_tokens || 350;
-              break;
-            } else {
+
+              const completion = (await openRouterRes.json()) as any;
+              const choice = completion.choices?.[0];
+              const choiceMsg = choice?.message;
+
+              // Handle native tool calls
+              if (choiceMsg?.tool_calls && choiceMsg.tool_calls.length > 0) {
+                messages.push(choiceMsg);
+
+                for (const call of choiceMsg.tool_calls) {
+                  const toolName = call.function.name;
+                  let toolArgs: any = {};
+                  try {
+                    toolArgs = JSON.parse(call.function.arguments || '{}');
+                  } catch (_) {}
+
+                  sendSse('tool_start', { tool: toolName, arguments: toolArgs });
+                  const toolResult = await this.executeTool(userId, toolName, toolArgs);
+                  sendSse('tool_end', { tool: toolName, result: toolResult });
+                  toolCallsExecuted.push({ tool: toolName, args: toolArgs, result: toolResult });
+
+                  messages.push({
+                    role: 'tool',
+                    tool_call_id: call.id,
+                    name: toolName,
+                    content: JSON.stringify(toolResult),
+                  });
+                }
+                continue;
+              }
+
+              // Check if model returned pseudo-tool tags in content
+              let rawContent = choiceMsg?.content || '';
+              if (rawContent && (rawContent.includes('<tool_call>') || rawContent.includes('<function_'))) {
+                console.warn(`[AI] Detected pseudo-XML tool tags in content: ${rawContent.slice(0, 100)}`);
+                // Extract tool name if possible
+                const fnMatch = rawContent.match(/<function_([a-zA-Z0-9_]+)>/) || rawContent.match(/name="?([a-zA-Z0-9_]+)"?/);
+                if (fnMatch && fnMatch[1]) {
+                  const pseudoTool = fnMatch[1];
+                  sendSse('tool_start', { tool: pseudoTool, arguments: {} });
+                  const toolResult = await this.executeTool(userId, pseudoTool, {});
+                  sendSse('tool_end', { tool: pseudoTool, result: toolResult });
+                  toolCallsExecuted.push({ tool: pseudoTool, args: {}, result: toolResult });
+
+                  messages.push({
+                    role: 'assistant',
+                    content: null,
+                    tool_calls: [{
+                      id: `call_${Date.now()}`,
+                      type: 'function',
+                      function: { name: pseudoTool, arguments: '{}' }
+                    }]
+                  });
+                  messages.push({
+                    role: 'tool',
+                    tool_call_id: `call_${Date.now()}`,
+                    name: pseudoTool,
+                    content: JSON.stringify(toolResult),
+                  });
+                  continue;
+                }
+              }
+
+              if (rawContent && rawContent.trim()) {
+                // Clean any trailing pseudo tags
+                const cleanedText = rawContent
+                  .replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, '')
+                  .replace(/<function_[\s\S]*?<\/function>/gi, '')
+                  .trim();
+
+                if (cleanedText) {
+                  assistantText = cleanedText;
+                  tokensUsed = completion.usage?.total_tokens || 350;
+                  openRouterSucceeded = true;
+                  break;
+                }
+              }
+
+              // If choiceMsg has no content and no tool calls, exit turn loop
               break;
             }
-          }
 
-          tokensUsed = Math.max(tokensUsed, 350 + toolCallsExecuted.length * 80);
+            tokensUsed = Math.max(tokensUsed, 350 + toolCallsExecuted.length * 80);
 
-          // If the model returned tool data but no final text, retry with a
-          // focused synthesis prompt (no tools) so the model is forced to
-          // answer the user's actual question using the data.
-          if ((!assistantText || !assistantText.trim()) && toolCallsExecuted.length > 0) {
-            console.warn('OpenRouter finished without final text. Attempting synthesis retry...');
-            try {
-              const toolDataSummary = toolCallsExecuted.map((tc: any) => {
-                return `Tool "${tc.tool}" returned:\n${JSON.stringify(tc.result, null, 2)}`;
-              }).join('\n\n');
-
-              const synthesisMessages = [
-                {
-                  role: 'system' as const,
-                  content: `You are a concise Ethiopian financial coach. The user asked a question and financial tools have already gathered the data below. Your ONLY job is to answer the user's question using this data. Follow the 3-step format: 1) Bold headline with exact figures, 2) 2-4 bullet breakdown, 3) One actionable recommendation. Currency is ETB.`,
-                },
-                {
-                  role: 'user' as const,
-                  content: `User's question: "${userContent}"\n\nTool data gathered:\n${toolDataSummary}\n\nPlease answer the user's question based on this data.`,
-                },
-              ];
-
+            // If tools were executed but no final text was output, synthesize using full conversation context
+            if ((!assistantText || !assistantText.trim()) && toolCallsExecuted.length > 0) {
+              console.log(`[AI] Forcing text synthesis with model ${modelToTry}...`);
               const synthController = new AbortController();
-              const synthTimeout = setTimeout(() => synthController.abort(), 20000);
+              const synthTimeout = setTimeout(() => synthController.abort(), 25000);
+
               const synthRes = await fetch(openRouterUrl, {
                 method: 'POST',
                 signal: synthController.signal,
@@ -321,10 +353,10 @@ export class AiService {
                   'X-Title': 'SW-Budget AI Coach',
                 },
                 body: JSON.stringify({
-                  model: env.OPENROUTER_MODEL,
-                  messages: synthesisMessages,
+                  model: modelToTry,
+                  messages,
                   temperature: 0.3,
-                  // No tools — force a text response
+                  // NO tools — forces model to answer user directly
                 }),
               }).finally(() => clearTimeout(synthTimeout));
 
@@ -332,19 +364,39 @@ export class AiService {
                 const synthCompletion = (await synthRes.json()) as any;
                 const synthContent = synthCompletion.choices?.[0]?.message?.content;
                 if (synthContent && synthContent.trim()) {
-                  assistantText = synthContent;
+                  assistantText = synthContent
+                    .replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, '')
+                    .replace(/<function_[\s\S]*?<\/function>/gi, '')
+                    .trim();
                   tokensUsed += synthCompletion.usage?.total_tokens || 200;
+                  openRouterSucceeded = true;
                 }
               }
-            } catch (synthErr: any) {
-              console.warn('Synthesis retry also failed:', synthErr.message);
             }
-          }
 
-          // Final fallback: deterministic synthesis from tool data
-          if (!assistantText || !assistantText.trim()) {
-            console.warn('All model attempts failed. Using deterministic synthesis...');
+            if (assistantText && assistantText.trim()) {
+              openRouterSucceeded = true;
+              const parts = assistantText.match(/.{1,60}(\s|$)/g) || [assistantText];
+              for (const part of parts) {
+                sendSse('delta', { text: part, content: part, type: 'token' });
+              }
+              break;
+            }
+          } catch (modelErr: any) {
+            console.warn(`[AI] Model ${modelToTry} failed: ${modelErr.message || modelErr}. Trying next candidate...`);
+          }
+        }
+
+        // Final fallback: deterministic synthesis from tool data or simulation
+        if (!assistantText || !assistantText.trim()) {
+          console.warn('[AI] All OpenRouter models failed or overloaded. Using deterministic fallback...');
+          if (toolCallsExecuted.length > 0) {
             assistantText = this.synthesizeToolResults(userContent, toolCallsExecuted);
+          } else {
+            const simResult = await this.executeDeterministicSimulation(userId, userContent, sendSse);
+            assistantText = simResult.text;
+            tokensUsed = simResult.tokensUsed;
+            toolCallsExecuted.push(...simResult.toolCalls);
           }
 
           if (assistantText && assistantText.trim()) {
@@ -353,19 +405,6 @@ export class AiService {
               sendSse('delta', { text: part, content: part, type: 'token' });
             }
           }
-        } catch (openRouterErr: any) {
-          console.warn('OpenRouter call failed, engaging deterministic simulation fallback:', openRouterErr.message || openRouterErr);
-          const simResult = await this.executeDeterministicSimulation(userId, userContent, sendSse);
-          assistantText = simResult.text;
-          tokensUsed = simResult.tokensUsed;
-          toolCallsExecuted.push(...simResult.toolCalls);
-        }
-
-        if (!assistantText || !assistantText.trim()) {
-          const simResult = await this.executeDeterministicSimulation(userId, userContent, sendSse);
-          assistantText = simResult.text;
-          tokensUsed = simResult.tokensUsed;
-          toolCallsExecuted.push(...simResult.toolCalls);
         }
       } else if (this.genAI) {
         // Live Gemini Model Call with Function Calling
@@ -610,6 +649,9 @@ Format EVERY response following this crisp 3-step executive structure:
     if (toolName === 'query_transactions') {
       return financeTools.queryTransactions(userId, args);
     }
+    if (toolName === 'get_recent_transactions') {
+      return financeTools.getRecentTransactions(userId, args);
+    }
     if (toolName === 'search_merchant_spending') {
       return financeTools.searchMerchantSpending(userId, args);
     }
@@ -744,11 +786,41 @@ Format EVERY response following this crisp 3-step executive structure:
       const totalBalance = balanceData?.total_balance || 0;
 
       const now = new Date();
-      const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-      const daysRemaining = Math.max(1, daysInMonth - now.getDate());
-      const dailyBudget = totalBalance > 0 ? Math.floor(totalBalance / daysRemaining) : 0;
+      // Extract user target spend if mentioned (e.g. "only want to spent 8000")
+      const targetMatch = userContent.match(/(?:spent|spend|keep to|limit to|under|target of)\s*(\d[\d,]*)/i) || userContent.match(/(\d[\d,]*)\s*(?:etb|birr)/i);
+      const targetSpend = targetMatch ? parseFloat(targetMatch[1].replace(/,/g, '')) : null;
 
-      return `${dataSection}\n\n**My Recommendation:**\nWith **${Number(totalBalance).toLocaleString()} ETB** available and **${daysRemaining} days** remaining this month, your safe daily spending limit is approximately **${Number(dailyBudget).toLocaleString()} ETB/day**. ${spendingData && spendingData.total_expense > 0 ? `You have already spent ${Number(spendingData.total_expense).toLocaleString()} ETB this month across ${spendingData.transaction_count} transactions.` : ''} Focus on essentials, avoid impulse purchases, and track every transaction to stay on pace.`;
+      // Extract target date (e.g. "next month 6" -> Nov 6)
+      let targetDate: Date | null = null;
+      const nextMonthDayMatch = lower.match(/nex(?:t)?\s+month\s+(\d{1,2})/);
+      if (nextMonthDayMatch) {
+        const day = parseInt(nextMonthDayMatch[1], 10);
+        targetDate = new Date(now.getFullYear(), now.getMonth() + 1, day);
+      } else if (lower.includes('next month')) {
+        targetDate = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+      } else if (lower.includes('end of the month') || lower.includes('end of month') || lower.includes('this month')) {
+        targetDate = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+      }
+
+      let daysRemaining = 0;
+      if (targetDate) {
+        const diffMs = targetDate.getTime() - now.getTime();
+        daysRemaining = Math.max(1, Math.ceil(diffMs / (1000 * 60 * 60 * 24)));
+      } else {
+        const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+        daysRemaining = Math.max(1, daysInMonth - now.getDate());
+      }
+
+      if (targetSpend && targetSpend > 0) {
+        const dailyAllowance = Math.floor(targetSpend / daysRemaining);
+        const weeklyAllowance = Math.floor(dailyAllowance * 7);
+        const cushionRemaining = totalBalance - targetSpend;
+
+        return `${dataSection}\n\n**🎯 Actionable Budget Plan to Sustain within ${Number(targetSpend).toLocaleString()} ETB:**\n- **Target Spending Window:** ${daysRemaining} days (approx. ${Math.ceil(daysRemaining / 7)} weeks)\n- **Daily Spending Limit:** **${Number(dailyAllowance).toLocaleString()} ETB/day** (~${Number(weeklyAllowance).toLocaleString()} ETB/week)\n- **Safe Cushion:** With ${Number(totalBalance).toLocaleString()} ETB total balance, spending ${Number(targetSpend).toLocaleString()} ETB will preserve **${Number(cushionRemaining).toLocaleString()} ETB** in your accounts.\n\n**Top Recommendations:**\n1. **Essential Categories First**: Allocate 60% (~${Number(Math.floor(targetSpend * 0.6)).toLocaleString()} ETB) to meals, groceries, and telecom.\n2. **Discretionary Cap**: Keep weekend and cafe outings under ${Number(Math.floor(dailyAllowance * 0.8)).toLocaleString()} ETB/day.\n3. **Track Daily**: Log every transaction immediately to prevent micro-expense leaks.`;
+      }
+
+      const dailyBudget = totalBalance > 0 ? Math.floor(totalBalance / daysRemaining) : 0;
+      return `${dataSection}\n\n**My Recommendation:**\nWith **${Number(totalBalance).toLocaleString()} ETB** available and **${daysRemaining} days** remaining in your planning horizon, your safe daily spending limit is approximately **${Number(dailyBudget).toLocaleString()} ETB/day**. ${spendingData && spendingData.total_expense > 0 ? `You have already spent ${Number(spendingData.total_expense).toLocaleString()} ETB this month across ${spendingData.transaction_count} transactions.` : ''} Focus on essentials, avoid impulse purchases, and track every transaction to stay on pace.`;
     }
 
     return dataSection;

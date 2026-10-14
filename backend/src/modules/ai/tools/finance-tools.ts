@@ -488,6 +488,13 @@ export class FinanceTools {
     };
   }
 
+  async getRecentTransactions(userId: string, args: any = {}) {
+    return this.queryTransactions(userId, {
+      limit: args.limit || args.count || 10,
+      period: args.period || 'this_month',
+    });
+  }
+
   /**
    * Analyzes spend frequency, totals, and line items with a specific merchant or counterparty.
    */
@@ -884,6 +891,17 @@ export const GEMINI_TOOL_DECLARATIONS = [
     },
   },
   {
+    name: 'get_recent_transactions',
+    description: 'Fetch the most recent recorded expenses or transactions. Alias for query_transactions with recent sort.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        limit: { type: 'NUMBER', description: 'Number of recent transactions to return (default 10)' },
+        period: { type: 'STRING', enum: ['today', 'this_week', 'this_month', 'last_month'], description: 'Time horizon' },
+      },
+    },
+  },
+  {
     name: 'search_merchant_spending',
     description: 'Analyze total spend, transaction frequency, and average spending with a specific merchant (e.g. Feres, Ride, Kaldis, Telebirr, Supermarket).',
     parameters: {
@@ -1080,6 +1098,20 @@ export const OPENAI_TOOL_DECLARATIONS = [
           min_amount: { type: 'number', description: 'Minimum amount filter' },
           max_amount: { type: 'number', description: 'Maximum amount filter' },
           limit: { type: 'number', description: 'Max number of transactions to return (1-25)' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_recent_transactions',
+      description: 'Fetch the most recent recorded expenses or transactions. Alias for query_transactions.',
+      parameters: {
+        type: 'object',
+        properties: {
+          limit: { type: 'number', description: 'Number of recent transactions to return (default 10)' },
+          period: { type: 'string', enum: ['today', 'this_week', 'this_month', 'last_month'], description: 'Time horizon' },
         },
       },
     },
