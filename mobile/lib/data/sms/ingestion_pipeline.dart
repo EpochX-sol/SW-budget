@@ -147,7 +147,7 @@ class IngestionPipeline {
     _database.syncAccountBalanceFromLatestTransaction(accountId);
 
     // 8. Totals On-Device Notification & Budget Alerts
-    unawaited(_notifyTransactionAndBudgets(txn, transactionId));
+    await _notifyTransactionAndBudgets(txn, transactionId);
 
     _parsedStreamController.add(parseResult);
 
