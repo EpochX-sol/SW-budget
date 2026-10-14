@@ -234,8 +234,12 @@ class _PlanCreationWizardState extends ConsumerState<PlanCreationWizard> {
               if (val != null) setState(() => _monthlyStartDay = val);
             },
           ),
+          const SizedBox(height: 16),
         ],
-        const SizedBox(height: 16),
+        if (_periodType == 'custom') ...[
+          _buildCustomDateSelector(start, end, days),
+          const SizedBox(height: 16),
+        ],
         Container(
           padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(color: AppColors.surface, borderRadius: BorderRadius.circular(12)),
@@ -243,10 +247,25 @@ class _PlanCreationWizardState extends ConsumerState<PlanCreationWizard> {
             children: [
               const Icon(Icons.calendar_today, color: AppColors.accent, size: 18),
               const SizedBox(width: 10),
-              Text(
-                '${DateFormat('d MMM yyyy').format(start)} – ${DateFormat('d MMM yyyy').format(end)} ($days days)',
-                style: const TextStyle(color: AppColors.text, fontWeight: FontWeight.w600, fontSize: 13),
+              Expanded(
+                child: Text(
+                  '${DateFormat('d MMM yyyy').format(start)} – ${DateFormat('d MMM yyyy').format(end)} ($days days)',
+                  style: const TextStyle(color: AppColors.text, fontWeight: FontWeight.w600, fontSize: 13),
+                ),
               ),
+              if (_periodType == 'custom')
+                GestureDetector(
+                  onTap: () => _selectCustomDateRange(context),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: AppColors.accent.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: AppColors.accent.withOpacity(0.4)),
+                    ),
+                    child: const Text('Change', style: TextStyle(color: AppColors.accent, fontWeight: FontWeight.w700, fontSize: 12)),
+                  ),
+                ),
             ],
           ),
         ),
@@ -254,10 +273,141 @@ class _PlanCreationWizardState extends ConsumerState<PlanCreationWizard> {
     );
   }
 
+  Widget _buildCustomDateSelector(DateTime start, DateTime end, int days) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('CUSTOM DATE RANGE', style: TextStyle(color: AppColors.text3, fontSize: 11, fontWeight: FontWeight.w700)),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              child: InkWell(
+                onTap: () => _selectCustomDateRange(context),
+                borderRadius: BorderRadius.circular(12),
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: AppColors.surface,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: AppColors.surface2),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('START DATE', style: TextStyle(color: AppColors.text3, fontSize: 10, fontWeight: FontWeight.w700)),
+                      const SizedBox(height: 4),
+                      Text(DateFormat('dd MMM yyyy').format(_customStartDate), style: const TextStyle(color: AppColors.text, fontWeight: FontWeight.w700, fontSize: 14)),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            const Icon(Icons.arrow_forward_rounded, color: AppColors.text3, size: 16),
+            const SizedBox(width: 8),
+            Expanded(
+              child: InkWell(
+                onTap: () => _selectCustomDateRange(context),
+                borderRadius: BorderRadius.circular(12),
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: AppColors.surface,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: AppColors.surface2),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('END DATE', style: TextStyle(color: AppColors.text3, fontSize: 10, fontWeight: FontWeight.w700)),
+                      const SizedBox(height: 4),
+                      Text(DateFormat('dd MMM yyyy').format(_customEndDate), style: const TextStyle(color: AppColors.text, fontWeight: FontWeight.w700, fontSize: 14)),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        SizedBox(
+          width: double.infinity,
+          child: ElevatedButton.icon(
+            onPressed: () => _selectCustomDateRange(context),
+            icon: const Icon(Icons.date_range, size: 18),
+            label: const Text('Open Calendar Picker', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.surface2,
+              foregroundColor: AppColors.accent,
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _selectCustomDateRange(BuildContext context) async {
+    final now = DateTime.now();
+    DateTime rangeStart = _customStartDate;
+    DateTime rangeEnd = _customEndDate;
+    if (rangeEnd.isBefore(rangeStart)) {
+      rangeEnd = rangeStart.add(const Duration(days: 29));
+    }
+
+    final picked = await showDateRangePicker(
+      context: context,
+      initialDateRange: DateTimeRange(start: rangeStart, end: rangeEnd),
+      firstDate: DateTime(now.year - 1, 1, 1),
+      lastDate: DateTime(now.year + 2, 12, 31),
+      helpText: 'Select Custom Budget Period',
+      cancelText: 'Cancel',
+      confirmText: 'Set Range',
+      saveText: 'Set Range',
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: const ColorScheme.dark(
+              primary: AppColors.accent,
+              onPrimary: Colors.white,
+              surface: AppColors.surface,
+              onSurface: AppColors.text,
+            ),
+            dialogBackgroundColor: AppColors.surface,
+          ),
+          child: child!,
+        );
+      },
+    );
+
+    if (picked != null) {
+      final days = picked.end.difference(picked.start).inDays + 1;
+      if (days > 366) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Custom period cannot exceed 366 days.')),
+          );
+        }
+        return;
+      }
+      setState(() {
+        _customStartDate = picked.start;
+        _customEndDate = picked.end;
+      });
+    }
+  }
+
   Widget _buildPeriodTile(String value, String title, String subtitle) {
     final selected = _periodType == value;
     return GestureDetector(
-      onTap: () => setState(() => _periodType = value),
+      onTap: () {
+        setState(() => _periodType = value);
+        if (value == 'custom') {
+          _selectCustomDateRange(context);
+        }
+      },
       child: Container(
         margin: const EdgeInsets.only(bottom: 10),
         padding: const EdgeInsets.all(14),

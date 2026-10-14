@@ -228,8 +228,37 @@ export class FinanceTools {
       });
     }
 
+    // Also include active budget plan if exists
+    let activePlanSummary: any = null;
+    try {
+      const { spendingPlanService } = await import('../../finance/spending-plan/spending-plan.service.js');
+      const activePlan = await spendingPlanService.getActivePlan(userId);
+      if (activePlan) {
+        const snap = activePlan.snapshot;
+        activePlanSummary = {
+          plan_id: activePlan.plan.id,
+          name: activePlan.plan.name,
+          period_type: activePlan.plan.periodType,
+          total_budget: Number(activePlan.plan.totalAmount),
+          start_date: activePlan.plan.startDate.toISOString().slice(0, 10),
+          end_date: activePlan.plan.endDate.toISOString().slice(0, 10),
+          allowance_today: snap.today.allowance,
+          spent_today: snap.today.spent,
+          remaining_today: snap.today.remainingToday,
+          total_spent_in_plan: snap.totals.spent,
+          left_to_spend: snap.totals.remaining,
+          status: snap.status,
+          projected_overspend: snap.pace.projectedOverspend,
+          days_until_broke: snap.pace.daysUntilBroke,
+        };
+      }
+    } catch {
+      // Ignore if spending plan calculation not available
+    }
+
     return {
       active_limits: results,
+      active_budget_plan: activePlanSummary,
       currency: 'ETB',
       month: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`,
     };
@@ -250,6 +279,9 @@ export class FinanceTools {
       plan_id: active.plan.id,
       plan_name: active.plan.name,
       as_of: snap.asOf,
+      total_budget: snap.totals.budget,
+      total_spent: snap.totals.spent,
+      remaining_budget: snap.totals.remaining,
       allowance_today: snap.today.allowance,
       spent_today: snap.today.spent,
       remaining_today: snap.today.remainingToday,

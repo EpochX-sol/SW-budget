@@ -196,7 +196,82 @@ class SyncEngine {
       totalPushed += acceptedIds.length;
     }
 
-    // 4. Push dirty Transactions with progressive batchIndex
+    // 4. Push dirty Budget Plans
+    final dirtyBudgetPlans = _database.getDirtyBudgetPlans(limit: batchSize);
+    if (dirtyBudgetPlans.isNotEmpty) {
+      final planChanges = dirtyBudgetPlans.map((row) {
+        return {
+          'entity': 'budget_plan',
+          'op': row['deleted_at'] != null ? 'delete' : 'upsert',
+          'id': row['id'],
+          'client_updated_at': row['updated_at'] ?? row['created_at'],
+          'data': {
+            'name': row['name'],
+            'total_amount': row['spending_limit'],
+            'start_date': row['start_date'],
+            'end_date': row['end_date'],
+            'period_type': row['period_type'],
+            'rollover_mode': 'SPREAD_EVENLY',
+            'reserve_percent': row['reserve_value'] ?? 0.0,
+            'active': row['status'] == 'active',
+            'status': row['status'],
+          },
+        };
+      }).toList();
+
+      final response = await _apiClient.pushSync(
+        batchIndex: 1,
+        totalBatches: 1,
+        changes: planChanges,
+        idempotencyKey: const Uuid().v4(),
+      );
+
+      final acceptedIds = (response['accepted_ids'] as List<dynamic>?)
+              ?.map((e) => e.toString())
+              .toList() ??
+          [];
+      final newCursor = (response['new_cursor'] as num?)?.toInt() ?? 0;
+      _database.markBudgetPlansSynced(acceptedIds, newCursor);
+      totalPushed += acceptedIds.length;
+    }
+
+    // 5. Push dirty Expected / Fixed Expenses
+    final dirtyExpenses = _database.getDirtyExpectedExpenses(limit: batchSize);
+    if (dirtyExpenses.isNotEmpty) {
+      final expenseChanges = dirtyExpenses.map((row) {
+        return {
+          'entity': 'fixed_expense',
+          'op': row['deleted_at'] != null ? 'delete' : 'upsert',
+          'id': row['id'],
+          'client_updated_at': row['updated_at'] ?? row['created_at'],
+          'data': {
+            'plan_id': row['plan_id'],
+            'title': row['name'],
+            'amount': row['amount'],
+            'due_date': row['due_date'],
+            'paid': row['status'] == 'paid',
+            'status': row['status'],
+          },
+        };
+      }).toList();
+
+      final response = await _apiClient.pushSync(
+        batchIndex: 1,
+        totalBatches: 1,
+        changes: expenseChanges,
+        idempotencyKey: const Uuid().v4(),
+      );
+
+      final acceptedIds = (response['accepted_ids'] as List<dynamic>?)
+              ?.map((e) => e.toString())
+              .toList() ??
+          [];
+      final newCursor = (response['new_cursor'] as num?)?.toInt() ?? 0;
+      _database.markExpectedExpensesSynced(acceptedIds, newCursor);
+      totalPushed += acceptedIds.length;
+    }
+
+    // 6. Push dirty Transactions with progressive batchIndex
     int currentBatchIndex = 1;
     while (true) {
       final dirtyTransactions = _database.getDirtyTransactions(limit: batchSize);
@@ -432,6 +507,22 @@ class SyncEngine {
             status: data['status'] as String? ?? 'active',
             changeSeq: changeSeq,
           );
+        } else if (entityType == 'budget_plan') {
+          final planData = Map<String, dynamic>.from(data);
+          planData['id'] = entityId;
+          planData['change_seq'] = changeSeq;
+          if (op == 'delete') {
+            planData['deleted_at'] = DateTime.now().toIso8601String();
+          }
+          _database.applyRemoteBudgetPlan(planData);
+        } else if (entityType == 'fixed_expense' || entityType == 'expected_expense') {
+          final expData = Map<String, dynamic>.from(data);
+          expData['id'] = entityId;
+          expData['change_seq'] = changeSeq;
+          if (op == 'delete') {
+            expData['deleted_at'] = DateTime.now().toIso8601String();
+          }
+          _database.applyRemoteExpectedExpense(expData);
         } else if (entityType == 'loan_debt' || entityType == 'debt') {
           if (op == 'delete') {
             _database.deleteDebt(entityId);

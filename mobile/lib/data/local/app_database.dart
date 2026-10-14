@@ -1462,6 +1462,114 @@ class AppDatabase {
     _notify(DatabaseTable.expectedExpenses);
   }
 
+  // --- BUDGET PLANS & EXPECTED EXPENSES SYNC HELPERS ---
+
+  List<Map<String, dynamic>> getDirtyBudgetPlans({int limit = 100}) {
+    final result = _db.select('''
+      SELECT * FROM local_budget_plans 
+      WHERE is_dirty = 1 
+      ORDER BY change_seq ASC 
+      LIMIT ?;
+    ''', [limit]);
+    return result.map((row) => Map<String, dynamic>.from(row)).toList();
+  }
+
+  void markBudgetPlansSynced(List<String> ids, int newChangeSeq) {
+    if (ids.isEmpty) return;
+    final placeholders = List.filled(ids.length, '?').join(',');
+    final now = DateTime.now().toIso8601String();
+    _db.execute(
+      'UPDATE local_budget_plans SET is_dirty = 0, change_seq = ?, updated_at = ? WHERE id IN ($placeholders);',
+      [newChangeSeq, now, ...ids],
+    );
+    _notify(DatabaseTable.budgetPlans);
+  }
+
+  List<Map<String, dynamic>> getDirtyExpectedExpenses({int limit = 100}) {
+    final result = _db.select('''
+      SELECT * FROM local_expected_expenses 
+      WHERE is_dirty = 1 
+      ORDER BY change_seq ASC 
+      LIMIT ?;
+    ''', [limit]);
+    return result.map((row) => Map<String, dynamic>.from(row)).toList();
+  }
+
+  void markExpectedExpensesSynced(List<String> ids, int newChangeSeq) {
+    if (ids.isEmpty) return;
+    final placeholders = List.filled(ids.length, '?').join(',');
+    final now = DateTime.now().toIso8601String();
+    _db.execute(
+      'UPDATE local_expected_expenses SET is_dirty = 0, change_seq = ?, updated_at = ? WHERE id IN ($placeholders);',
+      [newChangeSeq, now, ...ids],
+    );
+    _notify(DatabaseTable.expectedExpenses);
+  }
+
+  void applyRemoteBudgetPlan(Map<String, dynamic> data) {
+    final id = data['id'] as String;
+    final now = DateTime.now().toIso8601String();
+    if (data['deleted_at'] != null) {
+      _db.execute('''
+        UPDATE local_budget_plans 
+        SET deleted_at = ?, is_dirty = 0, updated_at = ? 
+        WHERE id = ?;
+      ''', [data['deleted_at'], now, id]);
+    } else {
+      final name = data['name'] as String? ?? 'My Spending Plan';
+      final periodType = data['period_type'] as String? ?? 'monthly';
+      final startDate = DateTime.tryParse(data['start_date']?.toString() ?? '') ?? DateTime.now();
+      final endDate = DateTime.tryParse(data['end_date']?.toString() ?? '') ?? DateTime.now().add(const Duration(days: 30));
+      final spendingLimit = (data['total_amount'] as num?)?.toDouble() ?? (data['spending_limit'] as num?)?.toDouble() ?? 0.0;
+      final changeSeq = (data['change_seq'] as num?)?.toInt() ?? 0;
+      final status = (data['active'] == false) ? 'archived' : (data['status'] as String? ?? 'active');
+
+      upsertBudgetPlan(
+        id: id,
+        name: name,
+        periodType: periodType,
+        startDate: startDate,
+        endDate: endDate,
+        spendingLimit: spendingLimit,
+        status: status,
+        changeSeq: changeSeq,
+        isDirty: false,
+      );
+    }
+    _notify(DatabaseTable.budgetPlans);
+  }
+
+  void applyRemoteExpectedExpense(Map<String, dynamic> data) {
+    final id = data['id'] as String;
+    final now = DateTime.now().toIso8601String();
+    if (data['deleted_at'] != null) {
+      _db.execute('''
+        UPDATE local_expected_expenses 
+        SET deleted_at = ?, is_dirty = 0, updated_at = ? 
+        WHERE id = ?;
+      ''', [data['deleted_at'], now, id]);
+    } else {
+      final planId = data['plan_id'] as String;
+      final name = data['name'] as String? ?? data['title'] as String? ?? 'Expense';
+      final amount = (data['amount'] as num?)?.toDouble() ?? 0.0;
+      final dueDate = data['due_date'] != null ? DateTime.tryParse(data['due_date'].toString()) : null;
+      final changeSeq = (data['change_seq'] as num?)?.toInt() ?? 0;
+      final paid = data['paid'] == true || data['status'] == 'paid';
+
+      upsertExpectedExpense(
+        id: id,
+        planId: planId,
+        name: name,
+        amount: amount,
+        dueDate: dueDate,
+        status: paid ? 'paid' : 'expected',
+        changeSeq: changeSeq,
+        isDirty: false,
+      );
+    }
+    _notify(DatabaseTable.expectedExpenses);
+  }
+
   // --- TRANSACTION PLAN EXCLUSION ---
 
   void setTransactionPlanExclusion(String id, {required bool exclude, String? reason}) {

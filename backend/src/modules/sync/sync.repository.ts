@@ -346,6 +346,7 @@ export class SyncRepository {
                 userId,
                 name: data.name || 'My Spending Plan',
                 totalAmount: new Prisma.Decimal(data.total_amount || 0),
+                periodType: data.period_type || 'monthly',
                 startDate: new Date(data.start_date || new Date()),
                 endDate: new Date(data.end_date || new Date()),
                 rolloverMode: data.rollover_mode || 'SPREAD_EVENLY',
@@ -359,6 +360,7 @@ export class SyncRepository {
               update: {
                 name: data.name || 'My Spending Plan',
                 totalAmount: new Prisma.Decimal(data.total_amount || 0),
+                periodType: data.period_type || 'monthly',
                 startDate: new Date(data.start_date || new Date()),
                 endDate: new Date(data.end_date || new Date()),
                 rolloverMode: data.rollover_mode || 'SPREAD_EVENLY',
@@ -796,6 +798,7 @@ export class SyncRepository {
         data: {
           name: bp.name,
           total_amount: bp.totalAmount.toString(),
+          period_type: bp.periodType,
           start_date: bp.startDate.toISOString().slice(0, 10),
           end_date: bp.endDate.toISOString().slice(0, 10),
           rollover_mode: bp.rolloverMode,
